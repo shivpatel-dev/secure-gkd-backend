@@ -1,5 +1,6 @@
 package com.shiv.securegkd.game;
 
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,7 +21,7 @@ public class GameController {
     }
 
     @PostMapping
-    public ResponseEntity<GameResponse> createGame(@RequestBody CreateGameRequest request) {
+    public ResponseEntity<GameResponse> createGame(@Valid @RequestBody CreateGameRequest request) {
         Game createdGame = gameService.createGame(request.code(), request.title());
 
         return ResponseEntity
