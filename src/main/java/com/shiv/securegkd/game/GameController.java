@@ -20,18 +20,19 @@ public class GameController {
     }
 
     @PostMapping
-    public ResponseEntity<Game> createGame(@RequestBody CreateGameRequest request) {
+    public ResponseEntity<GameResponse> createGame(@RequestBody CreateGameRequest request) {
         Game createdGame = gameService.createGame(request.code(), request.title());
-        return ResponseEntity.status(HttpStatus.CREATED).body(createdGame);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(GameResponse.from(createdGame));
     }
 
     @GetMapping("/{code}")
-    public ResponseEntity<Game> getGameByCode(@PathVariable String code) {
+    public ResponseEntity<GameResponse> getGameByCode(@PathVariable String code) {
         return gameService.findByCode(code)
+                .map(GameResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
-    }
-
-    private record CreateGameRequest(String code, String title) {
     }
 }
