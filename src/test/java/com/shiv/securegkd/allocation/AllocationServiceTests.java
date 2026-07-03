@@ -12,6 +12,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;
@@ -52,7 +53,7 @@ class AllocationServiceTests {
         when(idempotencyRecordRepository.findByIdempotencyKey("request-1")).thenReturn(Optional.empty());
         when(gameRepository.findByCode("GTA5")).thenReturn(Optional.of(game));
         when(gameKeyRepository.findAvailableByGame(eq(game), any(Pageable.class))).thenReturn(List.of(gameKey));
-        when(allocationRepository.save(any(Allocation.class))).thenAnswer(invocation -> {
+        when(allocationRepository.saveAndFlush(any(Allocation.class))).thenAnswer(invocation -> {
             Allocation allocation = invocation.getArgument(0);
             allocation.prePersist();
             return allocation;
@@ -69,7 +70,7 @@ class AllocationServiceTests {
         assertThat(pageableCaptor.getValue().getPageSize()).isEqualTo(1);
 
         ArgumentCaptor<Allocation> allocationCaptor = ArgumentCaptor.forClass(Allocation.class);
-        verify(allocationRepository).save(allocationCaptor.capture());
+        verify(allocationRepository).saveAndFlush(allocationCaptor.capture());
         assertThat(allocationCaptor.getValue().getGameKey()).isSameAs(gameKey);
 
         ArgumentCaptor<IdempotencyRecord> idempotencyRecordCaptor = ArgumentCaptor.forClass(IdempotencyRecord.class);
@@ -124,7 +125,26 @@ class AllocationServiceTests {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("No available game keys for game: GTA5");
 
-        verify(allocationRepository, never()).save(any(Allocation.class));
+        verify(allocationRepository, never()).saveAndFlush(any(Allocation.class));
+        verify(idempotencyRecordRepository, never()).save(any(IdempotencyRecord.class));
+    }
+
+    @Test
+    void allocateFailsWhenSelectedGameKeyIsAlreadyAllocatedByConcurrentRequest() {
+        Game game = new Game("GTA5", "Grand Theft Auto V");
+        GameKey gameKey = new GameKey(game, "GTA5-KEY-001");
+
+        when(idempotencyRecordRepository.findByIdempotencyKey("request-1")).thenReturn(Optional.empty());
+        when(gameRepository.findByCode("GTA5")).thenReturn(Optional.of(game));
+        when(gameKeyRepository.findAvailableByGame(eq(game), any(Pageable.class))).thenReturn(List.of(gameKey));
+        when(allocationRepository.saveAndFlush(any(Allocation.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate game_key_id"));
+
+        assertThatThrownBy(() -> allocationService.allocate("GTA5", new AllocationRequest("request-1")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Selected game key is no longer available for game: GTA5")
+                .hasCauseInstanceOf(DataIntegrityViolationException.class);
+
         verify(idempotencyRecordRepository, never()).save(any(IdempotencyRecord.class));
     }
 }
