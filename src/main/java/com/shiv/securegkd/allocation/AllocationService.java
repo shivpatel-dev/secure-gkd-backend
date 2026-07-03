@@ -6,6 +6,7 @@ import com.shiv.securegkd.gamekey.GameKey;
 import com.shiv.securegkd.gamekey.GameKeyRepository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
 
@@ -28,6 +29,7 @@ public class AllocationService {
         this.allocationRepository = allocationRepository;
     }
 
+    @Transactional
     public AllocationResponse allocate(String gameCode, AllocationRequest request) {
         Objects.requireNonNull(request, "allocationRequest is required");
 
