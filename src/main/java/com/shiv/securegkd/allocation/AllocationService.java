@@ -6,6 +6,7 @@ import com.shiv.securegkd.gamekey.GameKey;
 import com.shiv.securegkd.gamekey.GameKeyRepository;
 import com.shiv.securegkd.idempotency.IdempotencyRecord;
 import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,10 +54,18 @@ public class AllocationService {
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException("No available game keys for game: " + gameCode));
 
-        Allocation savedAllocation = allocationRepository.save(new Allocation(gameKey));
+        Allocation savedAllocation = saveAllocation(gameCode, gameKey);
         idempotencyRecordRepository.save(new IdempotencyRecord(request.idempotencyKey(), savedAllocation));
 
         return toResponse(savedAllocation);
+    }
+
+    private Allocation saveAllocation(String gameCode, GameKey gameKey) {
+        try {
+            return allocationRepository.saveAndFlush(new Allocation(gameKey));
+        } catch (DataIntegrityViolationException exception) {
+            throw new IllegalStateException("Selected game key is no longer available for game: " + gameCode, exception);
+        }
     }
 
     private AllocationResponse toResponse(Allocation allocation) {
