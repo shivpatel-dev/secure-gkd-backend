@@ -83,6 +83,17 @@ class IdempotencyRecordRepositoryTests {
         ).isInstanceOf(DataIntegrityViolationException.class);
     }
 
+    @Test
+    void rejectsDuplicateIdempotencyRecordForAllocation() {
+        deleteAll();
+        Allocation allocation = saveAllocation("GTA5", "GTA5-KEY-001");
+        idempotencyRecordRepository.saveAndFlush(new IdempotencyRecord("idem-key-001", allocation));
+
+        assertThatThrownBy(() ->
+                idempotencyRecordRepository.saveAndFlush(new IdempotencyRecord("idem-key-002", allocation))
+        ).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
     private Allocation saveAllocation(String gameCode, String gameKeyCode) {
         Game game = gameRepository.saveAndFlush(new Game(gameCode, gameCode + " title"));
         GameKey gameKey = gameKeyRepository.saveAndFlush(new GameKey(game, gameKeyCode));
