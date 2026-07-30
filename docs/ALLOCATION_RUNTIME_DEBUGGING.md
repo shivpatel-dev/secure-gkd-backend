@@ -8,6 +8,8 @@ They are intended for tracing the existing behavior, not for defining new API be
 For the Spring-managed datasource, connection pool, and transaction-associated
 connection lifecycle, see
 [`ALLOCATION_DATASOURCE_LIFECYCLE.md`](ALLOCATION_DATASOURCE_LIFECYCLE.md).
+For the controlled two-transaction PostgreSQL allocation race, see
+[`ALLOCATION_CONCURRENCY.md`](ALLOCATION_CONCURRENCY.md).
 
 ## Request entry and responsibilities
 
@@ -162,6 +164,10 @@ orders the remaining keys by ID.
 - `AllocationRepositoryTests`
   - verifies allocation persistence and lookup;
   - verifies the database rejects a second allocation for the same game key.
+- `AllocationConcurrencyIntegrationTests`
+  - coordinates two Spring-managed transactions after both select the same key;
+  - verifies the PostgreSQL uniqueness failure, service translation, and final
+    allocation and idempotency state.
 - `IdempotencyRecordRepositoryTests`
   - verifies saving and finding the key-to-allocation record;
   - verifies duplicate idempotency keys and duplicate allocation references are
