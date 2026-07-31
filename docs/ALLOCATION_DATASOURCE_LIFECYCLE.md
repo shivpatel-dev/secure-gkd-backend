@@ -6,6 +6,9 @@ is a companion to the complete
 [`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md) request flow and
 the SQL-focused
 [`ALLOCATION_SQL_DEBUGGING.md`](ALLOCATION_SQL_DEBUGGING.md) notes.
+For the relationship between a servlet request thread, its transaction-associated
+Hikari connection, and the PostgreSQL session, see
+[`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md).
 
 ## Evidence scope
 
