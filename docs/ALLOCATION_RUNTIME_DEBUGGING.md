@@ -10,6 +10,8 @@ connection lifecycle, see
 [`ALLOCATION_DATASOURCE_LIFECYCLE.md`](ALLOCATION_DATASOURCE_LIFECYCLE.md).
 For the controlled two-transaction PostgreSQL allocation race, see
 [`ALLOCATION_CONCURRENCY.md`](ALLOCATION_CONCURRENCY.md).
+For a real embedded-server request traced through a blocked PostgreSQL operation, see
+[`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md).
 
 ## Request entry and responsibilities
 
