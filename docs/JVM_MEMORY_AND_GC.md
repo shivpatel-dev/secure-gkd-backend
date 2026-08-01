@@ -11,6 +11,10 @@ reclamation are established in
 [`ALLOCATION_OBJECT_LIFETIME.md`](ALLOCATION_OBJECT_LIFETIME.md). They are linked
 rather than repeated here.
 
+For a bounded Java Flight Recorder view of sampled execution, waits, socket I/O,
+sampled allocation, and GC-event presence or absence during four real requests, see
+[`ALLOCATION_JFR_PROFILING.md`](ALLOCATION_JFR_PROFILING.md).
+
 ## Evidence boundaries
 
 - **Static source inspection** covers the Java version, dependencies, allocation
