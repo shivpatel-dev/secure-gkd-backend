@@ -8,7 +8,10 @@ through the real embedded servlet server. It complements the complete
 [`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md) request flow and
 the datasource details in
 [`ALLOCATION_DATASOURCE_LIFECYCLE.md`](ALLOCATION_DATASOURCE_LIFECYCLE.md). It does
-not define new allocation behavior or provide load-test or capacity evidence.
+not define new allocation behavior or provide load-test or capacity evidence. For the
+Java objects referenced by these request frames and their transaction-bound
+persistence-context lifetime, see
+[`ALLOCATION_OBJECT_LIFETIME.md`](ALLOCATION_OBJECT_LIFETIME.md).
 
 ## Evidence categories
 
