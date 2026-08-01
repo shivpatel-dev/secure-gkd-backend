@@ -5,6 +5,8 @@ These notes describe the current implementation of:
 `POST /api/games/{gameCode}/allocations`
 
 They are intended for tracing the existing behavior, not for defining new API behavior.
+For the evidence-based assessment of current backend performance risks, see
+[`BACKEND_PERFORMANCE_RISKS.md`](BACKEND_PERFORMANCE_RISKS.md).
 For the Spring-managed datasource, connection pool, and transaction-associated
 connection lifecycle, see
 [`ALLOCATION_DATASOURCE_LIFECYCLE.md`](ALLOCATION_DATASOURCE_LIFECYCLE.md).
