@@ -12,6 +12,9 @@ not define new allocation behavior or provide load-test or capacity evidence. Fo
 Java objects referenced by these request frames and their transaction-bound
 persistence-context lifetime, see
 [`ALLOCATION_OBJECT_LIFETIME.md`](ALLOCATION_OBJECT_LIFETIME.md).
+For sampled execution, duration-bearing wait and socket events, allocation samples,
+and client-observed timing from four bounded requests, see
+[`ALLOCATION_JFR_PROFILING.md`](ALLOCATION_JFR_PROFILING.md).
 
 ## Evidence categories
 
