@@ -25,6 +25,11 @@ are linked rather than repeated here.
 This is one bounded integration-test observation, not heap analysis, profiling, or a
 garbage-collection test.
 
+For the follow-up bounded observations of heap and non-heap usage, memory pools,
+collector statistics, and deliberate client-response retention, see
+[`JVM_MEMORY_AND_GC.md`](JVM_MEMORY_AND_GC.md). That note builds on the reference and
+reachability distinctions below rather than repeating them.
+
 ## Controlled request and reference flow
 
 The test creates the minimum database state: one `Game` and one `GameKey`. Java's
