@@ -3,16 +3,17 @@
 This note records one controlled PostgreSQL-backed test of the current allocation
 workflow when two transactions compete for one game key. It complements the complete
 [`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md) flow and does not
-define new allocation behavior.
+define new allocation behavior. Use the main runtime document for the complete
+recommended documentation path.
 
 ## Evidence categories
 
 - **Static source inspection** covers `AllocationService`, `findAvailableByGame`, the
   allocation mapping, and the idempotency mapping.
-- **PostgreSQL-backed integration-test evidence** comes from
+- **PostgreSQL-backed integration evidence** comes from
   `AllocationConcurrencyIntegrationTests`.
-- **Framework-supported inference** is limited to Spring's rollback behavior after the
-  unchecked service exception leaves the `@Transactional` proxy.
+- **Framework-supported interpretation** is limited to Spring's rollback behavior
+  after the unchecked service exception leaves the `@Transactional` proxy.
 
 No HTTP request, running server, CI job, stress test, or production-scale workload was
 used.

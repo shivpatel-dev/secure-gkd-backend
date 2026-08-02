@@ -5,6 +5,9 @@ real allocation requests pass through the embedded servlet server. It is a funct
 integration test with management-interface snapshots, not a load test, benchmark,
 allocation-rate measurement, leak diagnosis, or performance investigation.
 
+For the complete request flow and recommended documentation path, start with
+[`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md).
+
 The reference flow, stack-frame references, managed and detached entities, strong
 reachability, and the distinction between garbage-collection eligibility and actual
 reclamation are established in
@@ -20,11 +23,11 @@ sampled allocation, and GC-event presence or absence during four real requests, 
 - **Static source inspection** covers the Java version, dependencies, allocation
   controller and service, DTOs, entities, repositories, application configuration,
   existing integration tests, and runtime documentation.
-- **PostgreSQL-backed functional evidence** comes from
+- **Running-server evidence** comes from the PostgreSQL-backed
   `AllocationJvmMemoryGcIntegrationTests`. It uses a random-port embedded server, ten
   sequential real HTTP requests, JDBC database-product metadata, and final database
   queries.
-- **JDK-management-interface observations** are three point-in-time readings from
+- **JDK management-interface evidence** consists of three point-in-time readings from
   `MemoryMXBean`, `MemoryPoolMXBean`, and `GarbageCollectorMXBean` during that focused
   run.
 - **Framework-supported interpretation** explains the likely lifetimes of Spring MVC,
@@ -171,6 +174,7 @@ The complete-suite command is:
 Actual complete-suite result: 39 tests, 0 failures, 0 errors, 0 skipped, and
 `BUILD SUCCESS`.
 
-These results are PostgreSQL-backed functional evidence plus JDK-management-interface
-observations from one local process. They do not generalize the numeric readings to
-another run, machine, collector, JVM configuration, or production workload.
+These results are PostgreSQL-backed running-server evidence plus JDK
+management-interface evidence from one local process. They do not generalize the
+numeric readings to another run, machine, collector, JVM configuration, or production
+workload.

@@ -9,6 +9,7 @@ the SQL-focused
 For the relationship between a servlet request thread, its transaction-associated
 Hikari connection, and the PostgreSQL session, see
 [`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md).
+Use the main runtime document for the complete recommended documentation path.
 
 ## Evidence scope
 
@@ -19,11 +20,11 @@ The claims below use four evidence categories:
   `AllocationTransactionRollbackTests`.
 - **Resolved dependency evidence** identifies the datasource, pool, ORM, and JDBC
   artifacts on this project's runtime classpath.
-- **Observed PostgreSQL-backed test evidence** comes from one focused execution of
+- **PostgreSQL-backed integration evidence** comes from one focused execution of
   `AllocationTransactionRollbackTests` with temporary command-line logging.
-- **Framework-supported inference** explains connection acquisition and pool return
-  where the focused output showed the surrounding lifecycle but not the physical pool
-  event itself.
+- **Framework-supported interpretation** explains connection acquisition and pool
+  return where the focused output showed the surrounding lifecycle but not the
+  physical pool event itself.
 
 No allocation HTTP request was run. The observation did not exhaust the pool, tune it,
 compare concurrent requests, or prove reuse of one physical connection by later
@@ -82,7 +83,7 @@ That tree proves that HikariCP is available transitively, but availability alone
 not prove it is the selected runtime pool. The focused test supplied the second part
 of the evidence:
 
-**Observed PostgreSQL-backed test evidence.**
+**PostgreSQL-backed integration evidence.**
 
 - Hikari logged `HikariPool-1 - Starting...` and `Start completed`.
 - Hikari logged pooled connections whose delegate class was
@@ -133,7 +134,7 @@ promote those observed values into project configuration or tuning guidance.
 
 ### Transaction start and acquisition
 
-**Static source inspection and observed test evidence.**
+**Static source inspection and PostgreSQL-backed integration evidence.**
 When a caller reaches `AllocationService.allocate` through its Spring proxy,
 `JpaTransactionManager` starts the transaction before the method body runs. The
 focused output showed:
@@ -151,8 +152,8 @@ workflow needs database access at that point at the latest.
 The focused logger did not emit a physical Hikari checkout event correlated
 specifically with the service transaction. Therefore, whether the physical connection
 was acquired during transaction setup or deferred until the first SQL statement was
-not directly observed. It is framework-supported inference that Hibernate obtains it
-from Hikari no later than the first required JDBC operation.
+not directly observed. It is framework-supported interpretation that Hibernate
+obtains it from Hikari no later than the first required JDBC operation.
 
 ### Transaction-bound repository work
 
@@ -160,7 +161,7 @@ from Hikari no later than the first required JDBC operation.
 All repository calls inside `allocate`, `allocateNewGameKey`, and `saveAllocation`
 execute within the public method's transaction.
 
-**Observed PostgreSQL-backed test evidence.**
+**PostgreSQL-backed integration evidence.**
 During the focused run,
 `JpaTransactionManager` logged that a repository operation found the thread-bound
 `EntityManager` and participated in the existing allocation transaction.
@@ -171,7 +172,7 @@ idempotency-record save remains part of the same transaction.
 
 ### Completion, rollback, and pool eligibility
 
-**Observed PostgreSQL-backed test evidence.**
+**PostgreSQL-backed integration evidence.**
 The test deliberately makes the idempotency repository throw after the allocation
 flush. The observed sequence for the service transaction was:
 
@@ -186,12 +187,12 @@ The test then queried PostgreSQL through new repository transactions and confirm
 that neither the flushed allocation nor an idempotency record remained. This is
 database-backed rollback evidence.
 
-**Framework-supported inference.**
+**Framework-supported interpretation.**
 Closing the Hibernate logical connection after transaction completion makes its
 underlying pooled connection eligible to be returned to Hikari. With a pooled
 datasource, normal logical `Connection.close()` handling returns the connection to the
 pool rather than necessarily closing the physical PostgreSQL socket. That pool-return
-interpretation is framework-supported inference: the selected logger showed logical
+interpretation is framework-supported: the selected logger showed logical
 connection closure but did not emit a transaction-specific Hikari return event.
 
 A later transaction may borrow the same physical pooled connection, but it has a new

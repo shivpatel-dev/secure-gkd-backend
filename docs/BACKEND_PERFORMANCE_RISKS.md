@@ -4,6 +4,9 @@ This assessment applies to the current Secure GKD backend, especially
 `POST /api/games/{gameCode}/allocations`. It summarizes existing evidence instead of
 repeating the underlying experiments, and it does not recommend an optimization.
 
+For the connected runtime explanation and complete recommended reading order, start
+with [`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md).
+
 ## Evidence categories and existing records
 
 - **Static source inspection**: current Java source, `application.yaml`, `pom.xml`,

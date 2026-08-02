@@ -8,12 +8,13 @@ entity relationships in [`ALLOCATION_SQL_DEBUGGING.md`](ALLOCATION_SQL_DEBUGGING
 and the observed request stack in
 [`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md). Those explanations
 are linked rather than repeated here.
+Use the main runtime document for the complete recommended documentation path.
 
 ## Evidence boundaries
 
 - **Static source inspection** covers the controller, service, DTO records, entities,
   repositories, configuration, and focused test.
-- **PostgreSQL-backed running-server evidence** comes from
+- **Running-server evidence** comes from the PostgreSQL-backed
   `AllocationObjectLifetimeIntegrationTests`. It starts Spring Boot with a random-port
   embedded Tomcat server, retains the configured datasource, verifies JDBC metadata,
   and sends one real HTTP request.
