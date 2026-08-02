@@ -5,6 +5,9 @@ sequential allocation requests. It is a functional profiling observation, not a 
 test, stress test, benchmark, production trace, or basis for throughput, capacity,
 percentile-latency, scalability, or tuning claims.
 
+For the complete request flow and recommended documentation path, start with
+[`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md).
+
 The synchronous request-thread and PostgreSQL-blocking model is established in
 [`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md), including the
 distinction between a Tomcat worker, a Hikari connection, and a PostgreSQL session.
@@ -19,10 +22,10 @@ than repeated here.
 - **Static source inspection** covers Java 17, the existing dependencies, allocation
   controller and service, repositories, datasource configuration, integration tests,
   and runtime documentation.
-- **PostgreSQL-backed functional evidence** comes from
+- **Running-server evidence** comes from the PostgreSQL-backed
   `AllocationJfrProfilingIntegrationTests`: random-port embedded Tomcat, JDBC metadata,
   four real HTTP responses, and final SQL-backed state assertions.
-- **JFR-recorded runtime evidence** consists of the event metadata, events, stack
+- **JFR-recorded evidence** consists of the event metadata, events, stack
   samples, duration-bearing events, and thread associations parsed from one bounded
   recording with the standard Java 17 consumer API.
 - **Client-side elapsed-time observations** use `System.nanoTime()` around each

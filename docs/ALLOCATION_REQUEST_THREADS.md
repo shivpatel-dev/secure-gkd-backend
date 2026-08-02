@@ -15,6 +15,7 @@ persistence-context lifetime, see
 For sampled execution, duration-bearing wait and socket events, allocation samples,
 and client-observed timing from four bounded requests, see
 [`ALLOCATION_JFR_PROFILING.md`](ALLOCATION_JFR_PROFILING.md).
+Use the main runtime document for the complete recommended documentation path.
 
 ## Evidence categories
 
@@ -22,11 +23,12 @@ and client-observed timing from four bounded requests, see
   and service, repository interfaces, and the focused test.
 - **Resolved dependency evidence** identifies the embedded servlet-container
   artifacts on this project's runtime classpath.
-- **PostgreSQL-backed runtime evidence** comes from
+- **Running-server evidence** comes from the PostgreSQL-backed
   `AllocationRequestThreadIntegrationTests`, which starts the embedded server and
   sends a real HTTP request.
-- **Framework-supported inference** is limited to interpreting unconfigured runtime
-  limits as framework-supplied values and explaining the synchronous execution model.
+- **Framework-supported interpretation** is limited to interpreting unconfigured
+  runtime limits as framework-supplied values and explaining the synchronous
+  execution model.
 
 The observation is one bounded test request, not a benchmark or production trace.
 

@@ -7,13 +7,15 @@ These notes focus on SQL and association loading for:
 For the complete request flow and failure paths, see
 [`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md) and
 [`ALLOCATION_FAILURE_DEBUGGING.md`](ALLOCATION_FAILURE_DEBUGGING.md).
+Use the main runtime document for the complete recommended documentation path.
 
 ## Evidence scope
 
-This document combines source inspection with one successful PostgreSQL-backed
-repository test. SQL from that test is labeled **observed test evidence**. The
+This document combines **static source inspection** with one successful
+**PostgreSQL-backed repository evidence**. SQL from that test retains that label. The
 new-allocation and replay statement shapes remain labeled **source-derived** because
-the controlled application did not start far enough to accept requests.
+the historical SQL-inspection application did not start far enough to accept
+requests.
 
 The first application attempt failed before Maven started because Java was not
 available on that PowerShell process's `PATH`. A later retry prepended the configured
@@ -50,6 +52,16 @@ than captured Hibernate output. Generated aliases, selected columns, statement c
 and insert timing may differ when the endpoint can be run against an initialized
 schema.
 
+Later running-server investigations successfully exercised new allocations through
+embedded Tomcat and PostgreSQL; see
+[`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md),
+[`ALLOCATION_OBJECT_LIFETIME.md`](ALLOCATION_OBJECT_LIFETIME.md),
+[`JVM_MEMORY_AND_GC.md`](JVM_MEMORY_AND_GC.md), and
+[`ALLOCATION_JFR_PROFILING.md`](ALLOCATION_JFR_PROFILING.md). Those tests were designed
+for thread, reference, memory, or JFR evidence, not complete Hibernate SQL capture.
+They do not retroactively supply endpoint statement counts, replay lazy-loading
+sequences, query timings, or query plans for this document.
+
 ## Successful new allocation
 
 **Source-derived.** The new-allocation branch implies the following persistence
@@ -61,8 +73,9 @@ operations in order:
 4. Insert the allocation and flush it.
 5. Save the idempotency record.
 
-No successful new-allocation request ran during this inspection, so there is no
-observed statement count for this path.
+No successful new-allocation request ran during the historical SQL inspection, so
+there is no observed endpoint statement count for this path. Later successful
+running-server requests did not capture a complete SQL sequence.
 
 Representative statement shapes are:
 
@@ -126,8 +139,9 @@ Hibernate, SQL, or PostgreSQL.
 game lookup, available-key query, allocation insert, and idempotency-record insert.
 The response still needs the original allocation, its game key, and the game.
 
-No replay request ran during this inspection, so there is no observed statement count
-or observed lazy-initialization sequence for this path.
+No replay request ran during the historical SQL inspection, so there is no observed
+statement count or observed lazy-initialization sequence for this path. The later
+running-server investigations exercised new allocations, not a replay SQL capture.
 
 All three entity relationships on that path are explicitly lazy:
 
@@ -194,8 +208,8 @@ JPA slice tests when their configured datasource is available because
 `@AutoConfigureTestDatabase(replace = NONE)` prevents replacement with an embedded
 database. They cover exclusion, ordering, and pagination.
 
-**Observed test evidence.** This focused command ran the second test with temporary
-Hibernate SQL logging:
+**PostgreSQL-backed repository evidence.** This focused command ran the second test
+with temporary Hibernate SQL logging:
 
 ```powershell
 .\mvnw.cmd '-Dtest=GameKeyRepositoryTests#findAvailableByGameReturnsFirstAvailableGameKeyWhenLimitedToOne' '-Dlogging.level.org.hibernate.SQL=DEBUG' test
@@ -270,18 +284,20 @@ response and limits key selection to one row. No inspected service loop traverse
 collection and initializes an association once per element.
 
 The observed repository method used one select and did not repeat an allocation query
-per returned key. The endpoint paths did not run, so there is still no runtime evidence
-for the replay's lazy-initialization sequence. Taken together with the absence of a
-collection traversal in the inspected service source, the evidence does not establish
-an N+1 pattern. Such a conclusion would require the same association select to repeat
-in proportion to a result-set size, not merely fixed lazy selects for one replay.
+per returned key. The endpoint paths did not run under this SQL capture, so there is
+still no runtime evidence for the replay's lazy-initialization sequence. Taken
+together with the absence of a collection traversal in the inspected service source,
+the evidence does not establish an N+1 pattern. Such a conclusion would require the
+same association select to repeat in proportion to a result-set size, not merely fixed
+lazy selects for one replay.
 
 ## Reproducible inspection checkpoints
 
-The focused repository-test command above is confirmed to be reproducible against the
-configured PostgreSQL datasource. Completing the endpoint inspection requires the
-normal application schema to exist before startup; this documentation task did not
-create it or override `ddl-auto: none`.
+The focused repository-test command above was confirmed against the configured
+PostgreSQL datasource. Completing a comparable endpoint SQL capture requires the
+normal application schema to exist before startup; the historical SQL inspection did
+not create it or override `ddl-auto: none`. Later running-server tests used test-only
+schema creation but did not enable a complete endpoint SQL capture.
 
 Once that prerequisite is satisfied, use a controlled request with
 command-line-only SQL logging and remove any temporary seed rows afterward. Useful

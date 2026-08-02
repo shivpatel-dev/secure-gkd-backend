@@ -6,19 +6,33 @@ diagnosing failures from the current implementation of:
 
 `POST /api/games/{gameCode}/allocations`
 
-They do not define new API behavior or repeat the complete allocation flow.
+They do not define new API behavior or repeat the complete allocation flow. Use the
+main runtime document for the complete recommended documentation path.
 
 ## Evidence scope
 
-The descriptions below were checked against the current source code and existing test
-code. No test, local request, debugger session, or running application was used while
-preparing these notes. Therefore:
+The descriptions below preserve the evidence available when this document was
+originally prepared: current source and existing test code were inspected, but no
+test, local request, debugger session, or running application was used for that
+original investigation. Therefore:
 
-- **Current source** describes behavior directly established by the implementation.
-- **Existing tests** identify the assertions already present in the test suite; those
-  tests were inspected, not run for this documentation change.
-- **Runtime reproduction** is `None` for every failure below. No HTTP response, logged
-  stack trace, Hibernate exception chain, or PostgreSQL error was captured.
+- **Static source inspection** describes behavior directly established by the
+  implementation.
+- **Inspected test coverage** identifies assertions present in the test suite; those
+  tests were inspected, not run for the original documentation change.
+- **Original runtime reproduction** is `None` for every failure below. No HTTP
+  response, logged stack trace, Hibernate exception chain, or PostgreSQL error was
+  captured while this document was prepared.
+
+The project's later
+[`ALLOCATION_CONCURRENCY.md`](ALLOCATION_CONCURRENCY.md) investigation adds separate
+**PostgreSQL-backed integration evidence** for one duplicate-allocation collision. It
+observed the preserved cause chain through the service, Spring persistence-exception
+translation, Hibernate, the PostgreSQL driver, and PostgreSQL's unique constraint.
+That later test called the Spring-managed service from two worker threads; it did not
+reproduce the failure through HTTP, and it supplies no evidence for the other failure
+paths below. No allocation failure path in this document is claimed as a
+running-server HTTP reproduction.
 
 ## HTTP responses, Java exceptions, and logged stack traces
 
@@ -55,14 +69,17 @@ Start at the outer exception and then follow each `Caused by` section:
   whose class begins with `com.shiv.securegkd`. It shows where project code threw,
   translated, or allowed the failure to cross a boundary.
 
-For the duplicate-allocation path, the source guarantees this part of the chain:
+For the duplicate-allocation path, static source inspection guarantees this part of
+the chain:
 
 `IllegalStateException` -> `DataIntegrityViolationException`
 
 The service creates the outer `IllegalStateException`; the caught
-`DataIntegrityViolationException` is its cause. A real persistence trace may contain
-additional Hibernate, JDBC, or PostgreSQL causes beneath it, but no such deeper chain
-was reproduced for this document.
+`DataIntegrityViolationException` is its cause. The original investigation did not
+reproduce a deeper chain. The later controlled concurrency test separately observed
+additional Hibernate `ConstraintViolationException` and PostgreSQL `PSQLException`
+causes; see [`ALLOCATION_CONCURRENCY.md`](ALLOCATION_CONCURRENCY.md) for the exact
+arrangement, database evidence, and limits.
 
 ## Identifying the layer where a failure began
 
@@ -77,7 +94,8 @@ was reproduced for this document.
 
 Do not infer a PostgreSQL root cause merely from the outer service exception. Confirm
 it from an actually captured cause chain before treating it as observed database
-behavior.
+behavior. The concurrency note provides that confirmation only for its controlled
+duplicate-allocation scenario.
 
 ## Failure paths
 
@@ -122,7 +140,8 @@ malformed request body is a different binding failure and is not documented here
   those cases are established by the current `@NotBlank` constraint, not by separate
   test methods.
 
-**Runtime reproduction:** None.
+**Original runtime reproduction:** None. No later reproduction is linked for this
+validation path.
 
 ### Missing `Game`
 
@@ -155,7 +174,8 @@ project's validation `ApiError`.
 - The inspected controller tests do not assert an HTTP response or logging behavior
   for this service exception.
 
-**Runtime reproduction:** None.
+**Original runtime reproduction:** None. No later reproduction is linked for this
+missing-game path.
 
 ### No available `GameKey`
 
@@ -192,7 +212,8 @@ also propagates through Spring's normal error handling.
 - The inspected controller tests do not assert an HTTP response or logging behavior
   for this service exception.
 
-**Runtime reproduction:** None.
+**Original runtime reproduction:** None. No later reproduction is linked for this
+no-available-key path.
 
 ### Duplicate-allocation persistence failure
 
@@ -239,10 +260,15 @@ currently define a dedicated HTTP response contract for this failure.
   test configured not to replace the datasource. It asserts that saving a second
   allocation for one game key raises `DataIntegrityViolationException`. It does not
   exercise the service translation or HTTP layer.
-- No inspected test captures or asserts the full Hibernate/PostgreSQL cause chain, an
-  HTTP response, or logged output for this failure.
+- The later `AllocationConcurrencyIntegrationTests` execution captured and asserted
+  the service, Spring, Hibernate, and PostgreSQL cause chain and the final database
+  state for a controlled collision. It did not exercise the HTTP layer or assert
+  logged output.
 
-**Runtime reproduction:** None.
+**Original runtime reproduction:** None. **Later PostgreSQL-backed integration
+evidence:** the controlled collision documented in
+[`ALLOCATION_CONCURRENCY.md`](ALLOCATION_CONCURRENCY.md); no HTTP failure response or
+logged stack trace was captured.
 
 ## Practical debugging order
 

@@ -1,21 +1,93 @@
 # Allocation Runtime and Debugging Notes
 
-These notes describe the current implementation of:
+This document is the entry point for the complete allocation runtime, debugging, and
+performance documentation set. It describes the current implementation of:
 
 `POST /api/games/{gameCode}/allocations`
 
-They are intended for tracing the existing behavior, not for defining new API behavior.
-For the evidence-based assessment of current backend performance risks, see
-[`BACKEND_PERFORMANCE_RISKS.md`](BACKEND_PERFORMANCE_RISKS.md).
-For the Spring-managed datasource, connection pool, and transaction-associated
-connection lifecycle, see
-[`ALLOCATION_DATASOURCE_LIFECYCLE.md`](ALLOCATION_DATASOURCE_LIFECYCLE.md).
-For the controlled two-transaction PostgreSQL allocation race, see
-[`ALLOCATION_CONCURRENCY.md`](ALLOCATION_CONCURRENCY.md).
-For a real embedded-server request traced through a blocked PostgreSQL operation, see
-[`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md).
-For direct Java-reference and request-bound persistence-context observations, see
-[`ALLOCATION_OBJECT_LIFETIME.md`](ALLOCATION_OBJECT_LIFETIME.md).
+These notes are intended for tracing existing behavior, not for defining new API
+behavior. The linked documents preserve the commands, arrangements, observed values,
+and limitations of each investigation instead of repeating them here.
+
+## Recommended reading order
+
+1. Start with the request and transaction flow in this document, then use
+   [`ALLOCATION_FAILURE_DEBUGGING.md`](ALLOCATION_FAILURE_DEBUGGING.md) to separate
+   HTTP responses, Java exceptions, cause chains, and logged stack traces.
+2. Continue with [`ALLOCATION_SQL_DEBUGGING.md`](ALLOCATION_SQL_DEBUGGING.md) for
+   source-derived SQL shapes and the bounded repository observation, then
+   [`ALLOCATION_DATASOURCE_LIFECYCLE.md`](ALLOCATION_DATASOURCE_LIFECYCLE.md) for
+   rollback, Hibernate logical connections, HikariCP, and pool-lifecycle limits.
+3. Read [`ALLOCATION_CONCURRENCY.md`](ALLOCATION_CONCURRENCY.md) for the controlled
+   two-transaction PostgreSQL collision, followed by
+   [`ALLOCATION_REQUEST_THREADS.md`](ALLOCATION_REQUEST_THREADS.md) for synchronous
+   embedded-Tomcat request-thread execution during a confirmed PostgreSQL wait.
+4. Follow the Java references and request-bound persistence context in
+   [`ALLOCATION_OBJECT_LIFETIME.md`](ALLOCATION_OBJECT_LIFETIME.md), then distinguish
+   reachability, heap and non-heap observations, and garbage-collection limits in
+   [`JVM_MEMORY_AND_GC.md`](JVM_MEMORY_AND_GC.md).
+5. Finish with [`ALLOCATION_JFR_PROFILING.md`](ALLOCATION_JFR_PROFILING.md) for the
+   bounded JFR samples and duration-bearing events, then
+   [`BACKEND_PERFORMANCE_RISKS.md`](BACKEND_PERFORMANCE_RISKS.md) for the resulting
+   evidence-based risk assessment and the measurements that remain absent.
+
+## Evidence categories used across the set
+
+- **Static source inspection** establishes what tracked source, configuration, and
+  dependencies declare.
+- **Mock-based test evidence** isolates controller or service decisions without JPA,
+  Hibernate, or PostgreSQL.
+- **PostgreSQL-backed repository or integration evidence** exercises the configured
+  PostgreSQL datasource without necessarily crossing an HTTP server boundary.
+- **Running-server evidence** sends real HTTP requests through embedded Tomcat and the
+  application stack; each detailed note states whether PostgreSQL was also verified.
+- **JDK management-interface evidence** is limited to point-in-time JVM management
+  readings and cumulative counters from the bounded memory observation.
+- **JFR-recorded evidence** consists of samples and configured events from one bounded
+  whole-process recording, not a complete trace or benchmark.
+- **Framework-supported interpretation** connects observed boundaries using Spring,
+  Hibernate, HikariCP, servlet, JDBC, and JVM behavior that the specific observation
+  did not measure directly.
+- **Unmeasured or unverified behavior** remains explicitly labeled; absence from a
+  bounded observation is not proof that an event, cost, or production risk is absent.
+
+Historical documents retain the evidence available when they were prepared. Later
+evidence is linked and labeled separately rather than rewritten as part of an older
+observation.
+
+## How the runtime evidence connects
+
+1. An HTTP request enters embedded Tomcat on a servlet worker. Spring MVC binds and
+   validates `AllocationRequest`, and the controller delegates synchronously to the
+   Spring-managed `AllocationService` proxy.
+2. The proxy opens the `@Transactional` service boundary. Spring Data JPA delegates
+   repository work to Hibernate within the transaction-bound persistence context.
+3. Hibernate reaches PostgreSQL through the Spring-managed HikariCP datasource and a
+   transaction-associated JDBC connection. PostgreSQL executes the lookups and
+   writes, may make the synchronous request thread wait, and enforces the unique
+   allocation and idempotency constraints.
+4. `saveAndFlush` sends the allocation insert before the service continues; it does
+   not commit independently. A successful method return is followed by transaction
+   commit. An unchecked failure triggers rollback, and the controlled rollback and
+   concurrency tests verified the resulting PostgreSQL state for their scenarios.
+5. While the persistence context is active, the service follows DTO and entity
+   references and constructs `AllocationResponse`. After transaction completion the
+   request persistence context closes and its entities become detached; the
+   controller returns the DTO for JSON serialization rather than exposing entities.
+6. Stack frames and infrastructure retain Java references only according to their
+   lifetimes. Objects become eligible for collection only when they are no longer
+   reachable; neither detachment nor request completion proves immediate reclamation.
+7. JDK management interfaces supplied bounded memory snapshots and collector
+   counters. JFR supplied sampled stacks, allocation samples, and duration-bearing
+   wait and socket events across a separate four-request run. Neither supplies a
+   complete per-request or per-query trace.
+8. The performance assessment combines those categories. It identifies synchronous
+   blocking as an observed execution characteristic, but no current bottleneck,
+   endpoint statement count, representative query timing or plan, allocation-rate
+   problem, pool-capacity limit, or optimization need has been established.
+
+Use the specialized documents above for exact commands, test arrangements, SQL
+shapes, event counts, stack frames, observed values, and complete limitations.
 
 ## Request entry and responsibilities
 
@@ -170,10 +242,26 @@ orders the remaining keys by ID.
 - `AllocationRepositoryTests`
   - verifies allocation persistence and lookup;
   - verifies the database rejects a second allocation for the same game key.
+- `AllocationTransactionRollbackTests`
+  - flushes an allocation, forces the later idempotency save to fail, and verifies
+    through PostgreSQL-backed state that the transaction retained neither write.
 - `AllocationConcurrencyIntegrationTests`
   - coordinates two Spring-managed transactions after both select the same key;
   - verifies the PostgreSQL uniqueness failure, service translation, and final
     allocation and idempotency state.
+- `AllocationRequestThreadIntegrationTests`
+  - sends one real HTTP request through embedded Tomcat and confirms that the same
+    servlet worker remains on the synchronous path during a controlled PostgreSQL
+    wait.
+- `AllocationObjectLifetimeIntegrationTests`
+  - follows direct Java references, managed entity state, response construction, and
+    closure of the request-bound persistence context through one real HTTP request.
+- `AllocationJvmMemoryGcIntegrationTests`
+  - sends ten bounded real HTTP requests and records JDK management-interface memory,
+    pool, and collector snapshots without claiming per-object reclamation.
+- `AllocationJfrProfilingIntegrationTests`
+  - records one bounded four-request sequence and verifies functional PostgreSQL state
+    while collecting JFR samples and duration-bearing events.
 - `IdempotencyRecordRepositoryTests`
   - verifies saving and finding the key-to-allocation record;
   - verifies duplicate idempotency keys and duplicate allocation references are
@@ -181,5 +269,9 @@ orders the remaining keys by ID.
 - `GameRepositoryTests`
   - verifies a game can be found by its code.
 
-The service tests use repository mocks to isolate workflow decisions. The repository
-tests are JPA slice tests and isolate persistence queries and database constraints.
+The controller and service tests are mock-based evidence. The repository tests and
+rollback/concurrency tests are PostgreSQL-backed repository or integration evidence
+when the configured datasource is available. The request-thread, object-lifetime,
+memory, and JFR tests supply running-server evidence backed by PostgreSQL; only the
+memory test supplies JDK management-interface evidence, and only the JFR test supplies
+JFR-recorded evidence. See each specialized note for the exact run, result, and limit.
