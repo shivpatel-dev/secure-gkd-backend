@@ -114,8 +114,9 @@ was retained.
 
 ## Limits
 
-This test controls one two-transaction collision against one key in a test schema
-created with `ddl-auto=create-drop`. It demonstrates the current selection race,
+This test controls one two-transaction collision against one key in a PostgreSQL
+schema initialized from the tracked Flyway migrations. It demonstrates the current
+selection race,
 exception translation, database constraint, and final state for that scenario. It
 does not establish production throughput, timing, fairness, probability of collision,
 behavior under larger workloads, HTTP behavior, connection-pool capacity, or a need

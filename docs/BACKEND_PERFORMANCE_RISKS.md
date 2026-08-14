@@ -14,8 +14,7 @@ with [`ALLOCATION_RUNTIME_DEBUGGING.md`](ALLOCATION_RUNTIME_DEBUGGING.md).
 - **Mock-based test evidence**: `AllocationServiceTests` and controller tests verify
   workflow and HTTP decisions without executing JPA or PostgreSQL.
 - **PostgreSQL-backed integration evidence**: repository, rollback, and concurrency
-  tests exercise a PostgreSQL test schema created with test-only
-  `ddl-auto=create-drop`.
+  tests exercise a PostgreSQL schema initialized by tracked Flyway migrations.
 - **Running-server evidence**: bounded random-port integration tests send real HTTP
   requests through embedded Tomcat and PostgreSQL.
 - **JFR-recorded evidence**: one bounded four-request recording supplies samples and
@@ -167,14 +166,15 @@ The detailed evidence remains in:
 - **Current implementation and evidence:** entity mappings source-derive uniqueness
   requirements for `games.code`, `game_keys.code`, `allocations.game_key_id`,
   `idempotency_records.idempotency_key`, and `idempotency_records.allocation_id`.
-  PostgreSQL-backed tests using a Hibernate-created test schema observe those
-  uniqueness rules; the concurrency evidence directly identifies the generated
+  PostgreSQL-backed tests using the Flyway-managed schema observe those uniqueness
+  rules; the concurrency evidence directly identifies the
   `allocations_game_key_id_key` constraint. The available-key query filters by
   `game_keys.game_id`, checks `allocations.game_key_id`, and orders by key ID.
-  Production uses `ddl-auto: none`, and no tracked migration or schema definition was
-  found, so the deployed schema's indexes were not established here.
-- **Status and consequence:** **not demonstrated; deployed-schema support is
-  unverified** except for the controlled test-schema evidence above. If representative
+  The tracked baseline migration defines the required primary-key, unique, and
+  foreign-key constraints, while Hibernate is limited to mapping validation.
+- **Status and consequence:** **not observed as a problem** in the controlled migrated
+  schema. Deployment-specific schema state and representative query plans remain
+  unverified. If representative
   plans show avoidable high-cost scans as tables grow, allocation lookup time and
   transaction occupancy could increase.
 - **Investigate when:** a bounded read-only catalog inspection of the actual controlled

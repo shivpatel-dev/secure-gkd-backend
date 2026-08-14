@@ -36,8 +36,9 @@ version 16.14. Startup then failed on the first temporary initializer statement:
 ERROR: relation "idempotency_records" does not exist
 ```
 
-Production configuration uses `spring.jpa.hibernate.ddl-auto: none`, so the inspection
-did not create the missing schema. Therefore:
+At the time of this historical inspection, Hibernate schema creation was disabled and
+the repository did not yet contain Flyway migrations, so startup did not create the
+missing schema. Therefore:
 
 - the application never became ready to accept HTTP requests;
 - neither allocation request was sent;
@@ -294,10 +295,10 @@ lazy selects for one replay.
 ## Reproducible inspection checkpoints
 
 The focused repository-test command above was confirmed against the configured
-PostgreSQL datasource. Completing a comparable endpoint SQL capture requires the
-normal application schema to exist before startup; the historical SQL inspection did
-not create it or override `ddl-auto: none`. Later running-server tests used test-only
-schema creation but did not enable a complete endpoint SQL capture.
+PostgreSQL datasource. The historical SQL inspection predates the tracked Flyway
+baseline and did not create the normal application schema. Current application and
+running-server test startup applies the versioned migrations, but those tests did not
+enable a complete endpoint SQL capture.
 
 Once that prerequisite is satisfied, use a controlled request with
 command-line-only SQL logging and remove any temporary seed rows afterward. Useful

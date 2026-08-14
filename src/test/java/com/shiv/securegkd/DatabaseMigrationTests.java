@@ -1,0 +1,226 @@
+package com.shiv.securegkd;
+
+import com.shiv.securegkd.allocation.AllocationRepository;
+import com.shiv.securegkd.allocation.AllocationRequest;
+import com.shiv.securegkd.allocation.AllocationResponse;
+import com.shiv.securegkd.allocation.AllocationService;
+import com.shiv.securegkd.game.Game;
+import com.shiv.securegkd.game.GameRepository;
+import com.shiv.securegkd.gamekey.GameKey;
+import com.shiv.securegkd.gamekey.GameKeyRepository;
+import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.output.MigrateResult;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.time.Duration;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+class DatabaseMigrationTests {
+
+    @Autowired
+    private Flyway flyway;
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private GameRepository gameRepository;
+
+    @Autowired
+    private GameKeyRepository gameKeyRepository;
+
+    @Autowired
+    private AllocationRepository allocationRepository;
+
+    @Autowired
+    private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
+    private AllocationService allocationService;
+
+    @BeforeEach
+    void setUp() {
+        deleteTestData();
+    }
+
+    @AfterEach
+    void tearDown() {
+        deleteTestData();
+    }
+
+    @Test
+    void flywayOwnsThePostgresqlSchemaAndRepositoriesUseIt() throws Exception {
+        try (Connection connection = dataSource.getConnection()) {
+            assertThat(connection.getMetaData().getDatabaseProductName()).isEqualTo("PostgreSQL");
+        }
+
+        assertThat(jdbcTemplate.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '1'
+                  and description = 'create initial schema'
+                  and type = 'SQL'
+                  and success
+                """, Long.class)).isEqualTo(1L);
+
+        assertThat(jdbcTemplate.queryForList("""
+                select table_name
+                from information_schema.tables
+                where table_schema = current_schema()
+                  and table_name in ('games', 'game_keys', 'allocations', 'idempotency_records')
+                """, String.class)).containsExactlyInAnyOrder(
+                "games",
+                "game_keys",
+                "allocations",
+                "idempotency_records"
+        );
+
+        assertThat(readApplicationColumns()).containsExactlyInAnyOrder(
+                column("games", "id", "bigint", false, null, null, true),
+                column("games", "code", "character varying", false, 100, null, false),
+                column("games", "title", "character varying", false, 255, null, false),
+                column("games", "created_at", "timestamp with time zone", false, null, 6, false),
+                column("game_keys", "id", "bigint", false, null, null, true),
+                column("game_keys", "game_id", "bigint", false, null, null, false),
+                column("game_keys", "code", "character varying", false, 100, null, false),
+                column("game_keys", "created_at", "timestamp with time zone", false, null, 6, false),
+                column("allocations", "id", "bigint", false, null, null, true),
+                column("allocations", "game_key_id", "bigint", false, null, null, false),
+                column("allocations", "allocated_at", "timestamp with time zone", false, null, 6, false),
+                column("idempotency_records", "id", "bigint", false, null, null, true),
+                column("idempotency_records", "idempotency_key", "character varying", false, 255, null, false),
+                column("idempotency_records", "allocation_id", "bigint", false, null, null, false),
+                column("idempotency_records", "created_at", "timestamp with time zone", false, null, 6, false)
+        );
+
+        assertThat(jdbcTemplate.queryForList("""
+                select constraint_name
+                from information_schema.table_constraints
+                where constraint_schema = current_schema()
+                  and table_name in ('games', 'game_keys', 'allocations', 'idempotency_records')
+                  and constraint_type in ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')
+                """, String.class)).containsExactlyInAnyOrder(
+                "games_pkey",
+                "games_code_key",
+                "game_keys_pkey",
+                "game_keys_code_key",
+                "game_keys_game_id_fkey",
+                "allocations_pkey",
+                "allocations_game_key_id_key",
+                "allocations_game_key_id_fkey",
+                "idempotency_records_pkey",
+                "idempotency_records_idempotency_key_key",
+                "idempotency_records_allocation_id_key",
+                "idempotency_records_allocation_id_fkey"
+        );
+
+        Game game = gameRepository.saveAndFlush(new Game("MIGRATION-GAME", "Migration Test Game"));
+        gameKeyRepository.saveAndFlush(new GameKey(game, "MIGRATION-KEY-001"));
+
+        AllocationResponse firstResponse = allocationService.allocate(
+                game.getCode(),
+                new AllocationRequest("migration-idempotency-key")
+        );
+        AllocationResponse replayedResponse = allocationService.allocate(
+                game.getCode(),
+                new AllocationRequest("migration-idempotency-key")
+        );
+
+        assertThat(replayedResponse.gameCode()).isEqualTo(firstResponse.gameCode());
+        assertThat(replayedResponse.keyCode()).isEqualTo(firstResponse.keyCode());
+        Duration replayTimestampDifference = Duration.between(
+                firstResponse.allocatedAt(),
+                replayedResponse.allocatedAt()
+        ).abs();
+        assertThat(replayTimestampDifference)
+                .isLessThanOrEqualTo(Duration.ofNanos(1_000));
+        assertThat(allocationRepository.count()).isEqualTo(1L);
+        assertThat(idempotencyRecordRepository.count()).isEqualTo(1L);
+
+        MigrateResult repeatMigration = flyway.migrate();
+
+        assertThat(repeatMigration.migrationsExecuted).isZero();
+        assertThat(jdbcTemplate.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '1' and success
+                """, Long.class)).isEqualTo(1L);
+    }
+
+    private List<ColumnMetadata> readApplicationColumns() {
+        return jdbcTemplate.query("""
+                select table_name,
+                       column_name,
+                       data_type,
+                       is_nullable,
+                       character_maximum_length,
+                       datetime_precision,
+                       is_identity
+                from information_schema.columns
+                where table_schema = current_schema()
+                  and table_name in ('games', 'game_keys', 'allocations', 'idempotency_records')
+                """, (resultSet, rowNumber) -> new ColumnMetadata(
+                resultSet.getString("table_name"),
+                resultSet.getString("column_name"),
+                resultSet.getString("data_type"),
+                resultSet.getString("is_nullable").equals("YES"),
+                resultSet.getObject("character_maximum_length", Integer.class),
+                resultSet.getObject("datetime_precision", Integer.class),
+                resultSet.getString("is_identity").equals("YES")
+        ));
+    }
+
+    private ColumnMetadata column(
+            String tableName,
+            String columnName,
+            String dataType,
+            boolean nullable,
+            Integer maximumLength,
+            Integer datetimePrecision,
+            boolean identity
+    ) {
+        return new ColumnMetadata(
+                tableName,
+                columnName,
+                dataType,
+                nullable,
+                maximumLength,
+                datetimePrecision,
+                identity
+        );
+    }
+
+    private void deleteTestData() {
+        idempotencyRecordRepository.deleteAllInBatch();
+        allocationRepository.deleteAllInBatch();
+        gameKeyRepository.deleteAllInBatch();
+        gameRepository.deleteAllInBatch();
+    }
+
+    private record ColumnMetadata(
+            String tableName,
+            String columnName,
+            String dataType,
+            boolean nullable,
+            Integer maximumLength,
+            Integer datetimePrecision,
+            boolean identity
+    ) {
+    }
+}
