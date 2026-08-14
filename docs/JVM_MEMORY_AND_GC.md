@@ -40,7 +40,7 @@ sampled allocation, and GC-event presence or absence during four real requests, 
 ## Controlled request sequence
 
 The test starts Spring Boot with `RANDOM_PORT`, preserves the configured datasource,
-and sets Hibernate schema management only in the test context. It verifies through
+and uses the schema initialized by tracked Flyway migrations. It verifies through
 JDBC metadata that the database product is PostgreSQL, creates one controlled `Game`
 with ten available `GameKey` rows, and takes its first memory checkpoint after those
 fixtures and the application are ready.

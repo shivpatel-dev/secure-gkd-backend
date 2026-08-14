@@ -108,13 +108,17 @@ The following values are explicitly present in tracked `application.yaml`:
 | `spring.datasource.username` | `SPRING_DATASOURCE_USERNAME`, with fallback `secure_gkd_user` |
 | `spring.datasource.password` | `SPRING_DATASOURCE_PASSWORD`; no credential value is tracked |
 | `spring.datasource.driver-class-name` | `org.postgresql.Driver` |
-| `spring.jpa.hibernate.ddl-auto` | `none` |
+| `spring.jpa.hibernate.ddl-auto` | `validate` |
 | `spring.jpa.open-in-view` | `false` |
+| `spring.flyway.enabled` | `true` |
+| `spring.flyway.locations` | `classpath:db/migration` |
+| `spring.flyway.baseline-on-migrate` | `false` |
+| `spring.flyway.validate-on-migrate` | `true` |
 
-The focused test explicitly overrides `spring.jpa.hibernate.ddl-auto` to
-`create-drop`. Its `@AutoConfigureTestDatabase(replace = NONE)` annotation keeps the
-configured datasource instead of replacing it with an embedded test database. There
-is no tracked `src/test/resources` configuration.
+The focused test keeps the configured datasource instead of replacing it with an
+embedded test database. Flyway applies the same tracked migrations used by normal
+startup, and Hibernate validates rather than creates or drops that schema. There is
+no tracked `src/test/resources` configuration.
 
 The project does **not** explicitly set:
 

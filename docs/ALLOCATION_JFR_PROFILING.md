@@ -40,10 +40,10 @@ than repeated here.
 ## Controlled sequence and recording boundaries
 
 The test starts Spring Boot with `RANDOM_PORT`, retains the configured datasource,
-and limits schema creation and removal to its test context. JDBC metadata must report
-`PostgreSQL` before profiling continues. The test creates one controlled `Game` with
-exactly four available `GameKey` rows. An unprofiled `GET /api/health` initializes the
-dispatcher before the allocation recording begins.
+and uses the schema initialized by tracked Flyway migrations. JDBC metadata must
+report `PostgreSQL` before profiling continues. The test creates one controlled
+`Game` with exactly four available `GameKey` rows. An unprofiled `GET /api/health`
+initializes the dispatcher before the allocation recording begins.
 
 After the application, dispatcher, datasource, and fixtures are ready, the test
 constructs the four HTTP requests and JFR recording. It starts JFR immediately before

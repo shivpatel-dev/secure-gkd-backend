@@ -69,9 +69,9 @@ server implementation.
 ## Controlled request
 
 The focused test uses `@SpringBootTest(webEnvironment = RANDOM_PORT)` and the
-configured datasource with test-only `ddl-auto=create-drop`. It creates one game and
-one key, then Java's `HttpClient` sends a JSON `POST` to the random-port allocation
-endpoint. Standalone `MockMvc` is not involved.
+configured datasource with the schema initialized by tracked Flyway migrations. It
+creates one game and one key, then Java's `HttpClient` sends a JSON `POST` to the
+random-port allocation endpoint. Standalone `MockMvc` is not involved.
 
 A test-only servlet filter records request entry. Spring spies record controller,
 service, and `GameKeyRepository.findAvailableByGame` boundaries while delegating to
