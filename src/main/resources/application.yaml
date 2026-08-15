@@ -2,10 +2,10 @@ spring:
   application:
     name: secure-gkd-backend
 
+  profiles:
+    default: local
+
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/secure_gkd}
-    username: ${SPRING_DATASOURCE_USERNAME:secure_gkd_user}
-    password: ${SPRING_DATASOURCE_PASSWORD}
     driver-class-name: org.postgresql.Driver
 
   jpa:

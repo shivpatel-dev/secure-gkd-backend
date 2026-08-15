@@ -100,13 +100,10 @@ the same pool if its dependencies or datasource configuration change.
 ## Explicit configuration and framework-supplied behavior
 
 **Static source inspection.**
-The following values are explicitly present in tracked `application.yaml`:
+The following shared values are explicitly present in tracked `application.yaml`:
 
 | Setting | Explicit project value |
 | --- | --- |
-| `spring.datasource.url` | `SPRING_DATASOURCE_URL`, with fallback `jdbc:postgresql://localhost:5432/secure_gkd` |
-| `spring.datasource.username` | `SPRING_DATASOURCE_USERNAME`, with fallback `secure_gkd_user` |
-| `spring.datasource.password` | `SPRING_DATASOURCE_PASSWORD`; no credential value is tracked |
 | `spring.datasource.driver-class-name` | `org.postgresql.Driver` |
 | `spring.jpa.hibernate.ddl-auto` | `validate` |
 | `spring.jpa.open-in-view` | `false` |
@@ -115,10 +112,16 @@ The following values are explicitly present in tracked `application.yaml`:
 | `spring.flyway.baseline-on-migrate` | `false` |
 | `spring.flyway.validate-on-migrate` | `true` |
 
-The focused test keeps the configured datasource instead of replacing it with an
-embedded test database. Flyway applies the same tracked migrations used by normal
-startup, and Hibernate validates rather than creates or drops that schema. There is
-no tracked `src/test/resources` configuration.
+Datasource URL, username, and password responsibilities are profile-specific. The
+default `local` profile permits only localhost URL and local username fallbacks; its
+password remains required externally. The test-only `test` profile and packaged
+`prod` profile require all three values externally and have no local fallbacks. See
+[`CONFIGURATION_PROFILES.md`](CONFIGURATION_PROFILES.md) for the complete activation,
+secret, and CI boundaries.
+
+The focused test keeps the configured PostgreSQL datasource instead of replacing it
+with an embedded test database. Flyway applies the same tracked migrations used by
+normal startup, and Hibernate validates rather than creates or drops that schema.
 
 The project does **not** explicitly set:
 
