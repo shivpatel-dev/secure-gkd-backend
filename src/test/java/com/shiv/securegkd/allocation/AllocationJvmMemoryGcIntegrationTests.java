@@ -1,6 +1,7 @@
 package com.shiv.securegkd.allocation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shiv.securegkd.security.AllocationTestSecurityConfiguration;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
@@ -43,6 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
 )
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@Import(AllocationTestSecurityConfiguration.class)
 class AllocationJvmMemoryGcIntegrationTests {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(AllocationJvmMemoryGcIntegrationTests.class);
