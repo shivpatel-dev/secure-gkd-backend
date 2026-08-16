@@ -1,6 +1,7 @@
 package com.shiv.securegkd.allocation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shiv.securegkd.security.AllocationTestSecurityConfiguration;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
@@ -70,7 +71,10 @@ import static org.mockito.Mockito.doAnswer;
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
 )
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
-@Import(AllocationRequestThreadIntegrationTests.RequestTraceConfiguration.class)
+@Import({
+        AllocationRequestThreadIntegrationTests.RequestTraceConfiguration.class,
+        AllocationTestSecurityConfiguration.class
+})
 class AllocationRequestThreadIntegrationTests {
 
     private static final String GAME_CODE = "TRACE-GAME";
