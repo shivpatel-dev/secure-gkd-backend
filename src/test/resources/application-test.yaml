@@ -6,3 +6,8 @@ spring:
   test:
     database:
       replace: none
+
+secure-gkd:
+  security:
+    jwt:
+      signing-key-base64: ${random.value}${random.value}

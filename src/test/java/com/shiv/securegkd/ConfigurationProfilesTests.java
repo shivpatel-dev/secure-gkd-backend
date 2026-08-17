@@ -34,6 +34,13 @@ class ConfigurationProfilesTests {
         assertThat(resolver.getRequiredProperty("spring.flyway.enabled", Boolean.class)).isTrue();
         assertThat(resolver.getRequiredProperty("spring.flyway.baseline-on-migrate", Boolean.class)).isFalse();
         assertThat(resolver.getRequiredProperty("spring.flyway.validate-on-migrate", Boolean.class)).isTrue();
+        assertThat(resolver.getRequiredProperty("secure-gkd.security.jwt.access-token-lifetime"))
+                .isEqualTo("PT15M");
+        assertThatThrownBy(() -> resolver.getRequiredProperty(
+                "secure-gkd.security.jwt.signing-key-base64"
+        ))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("JWT_SIGNING_KEY_BASE64");
     }
 
     @Test

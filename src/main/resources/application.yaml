@@ -18,3 +18,9 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
     validate-on-migrate: true
+
+secure-gkd:
+  security:
+    jwt:
+      signing-key-base64: ${JWT_SIGNING_KEY_BASE64}
+      access-token-lifetime: ${JWT_ACCESS_TOKEN_LIFETIME:PT15M}

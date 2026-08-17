@@ -4,6 +4,7 @@ import com.shiv.securegkd.allocation.AllocationRepository;
 import com.shiv.securegkd.allocation.AllocationRequest;
 import com.shiv.securegkd.allocation.AllocationResponse;
 import com.shiv.securegkd.allocation.AllocationService;
+import com.shiv.securegkd.authentication.AuthenticationIdentityRepository;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
@@ -54,6 +55,9 @@ class DatabaseMigrationTests {
     @Autowired
     private AllocationService allocationService;
 
+    @Autowired
+    private AuthenticationIdentityRepository authenticationIdentityRepository;
+
     @BeforeEach
     void setUp() {
         deleteTestData();
@@ -79,16 +83,32 @@ class DatabaseMigrationTests {
                   and success
                 """, Long.class)).isEqualTo(1L);
 
+        assertThat(jdbcTemplate.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '2'
+                  and description = 'create authentication identities'
+                  and type = 'SQL'
+                  and success
+                """, Long.class)).isEqualTo(1L);
+
         assertThat(jdbcTemplate.queryForList("""
                 select table_name
                 from information_schema.tables
                 where table_schema = current_schema()
-                  and table_name in ('games', 'game_keys', 'allocations', 'idempotency_records')
+                  and table_name in (
+                      'games',
+                      'game_keys',
+                      'allocations',
+                      'idempotency_records',
+                      'authentication_identities'
+                  )
                 """, String.class)).containsExactlyInAnyOrder(
                 "games",
                 "game_keys",
                 "allocations",
-                "idempotency_records"
+                "idempotency_records",
+                "authentication_identities"
         );
 
         assertThat(readApplicationColumns()).containsExactlyInAnyOrder(
@@ -106,14 +126,24 @@ class DatabaseMigrationTests {
                 column("idempotency_records", "id", "bigint", false, null, null, true),
                 column("idempotency_records", "idempotency_key", "character varying", false, 255, null, false),
                 column("idempotency_records", "allocation_id", "bigint", false, null, null, false),
-                column("idempotency_records", "created_at", "timestamp with time zone", false, null, 6, false)
+                column("idempotency_records", "created_at", "timestamp with time zone", false, null, 6, false),
+                column("authentication_identities", "id", "bigint", false, null, null, true),
+                column("authentication_identities", "username", "character varying", false, 100, null, false),
+                column("authentication_identities", "password_hash", "character varying", false, 255, null, false),
+                column("authentication_identities", "created_at", "timestamp with time zone", false, null, 6, false)
         );
 
         assertThat(jdbcTemplate.queryForList("""
                 select constraint_name
                 from information_schema.table_constraints
                 where constraint_schema = current_schema()
-                  and table_name in ('games', 'game_keys', 'allocations', 'idempotency_records')
+                  and table_name in (
+                      'games',
+                      'game_keys',
+                      'allocations',
+                      'idempotency_records',
+                      'authentication_identities'
+                  )
                   and constraint_type in ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')
                 """, String.class)).containsExactlyInAnyOrder(
                 "games_pkey",
@@ -127,7 +157,9 @@ class DatabaseMigrationTests {
                 "idempotency_records_pkey",
                 "idempotency_records_idempotency_key_key",
                 "idempotency_records_allocation_id_key",
-                "idempotency_records_allocation_id_fkey"
+                "idempotency_records_allocation_id_fkey",
+                "authentication_identities_pkey",
+                "authentication_identities_username_key"
         );
 
         Game game = gameRepository.saveAndFlush(new Game("MIGRATION-GAME", "Migration Test Game"));
@@ -159,8 +191,8 @@ class DatabaseMigrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version = '1' and success
-                """, Long.class)).isEqualTo(1L);
+                where version in ('1', '2') and success
+                """, Long.class)).isEqualTo(2L);
     }
 
     private List<ColumnMetadata> readApplicationColumns() {
@@ -174,7 +206,13 @@ class DatabaseMigrationTests {
                        is_identity
                 from information_schema.columns
                 where table_schema = current_schema()
-                  and table_name in ('games', 'game_keys', 'allocations', 'idempotency_records')
+                  and table_name in (
+                      'games',
+                      'game_keys',
+                      'allocations',
+                      'idempotency_records',
+                      'authentication_identities'
+                  )
                 """, (resultSet, rowNumber) -> new ColumnMetadata(
                 resultSet.getString("table_name"),
                 resultSet.getString("column_name"),
@@ -207,6 +245,7 @@ class DatabaseMigrationTests {
     }
 
     private void deleteTestData() {
+        authenticationIdentityRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();

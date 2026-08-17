@@ -6,12 +6,14 @@ naming convention. Spring Boot runs pending migrations during startup before
 Hibernate validates the entity mappings. Hibernate does not create, update, or drop
 the normal application schema.
 
-`V1__create_initial_schema.sql` is the baseline for the current `games`, `game_keys`,
-`allocations`, and `idempotency_records` model. A clean database is initialized by
-starting the application with a database user that can create the required objects;
-Flyway creates its schema-history table, applies `V1`, and records the successful
-migration. Starting the application again validates the recorded migration and does
-not reapply it.
+`V1__create_initial_schema.sql` is the baseline for the `games`, `game_keys`,
+`allocations`, and `idempotency_records` model.
+`V2__create_authentication_identities.sql` adds the separate persisted identity used
+for credential authentication. A clean database is initialized by starting the
+application with a database user that can create the required objects; Flyway creates
+its schema-history table, applies pending versions in order, and records each
+successful migration. Starting the application again validates the recorded
+migrations and does not reapply them.
 
 Do not edit a migration after it has been applied. Every future schema change must be
 represented by a new migration with the next version. Review migrations together
