@@ -5,6 +5,7 @@ import com.shiv.securegkd.allocation.AllocationController;
 import com.shiv.securegkd.allocation.AllocationRequest;
 import com.shiv.securegkd.allocation.AllocationResponse;
 import com.shiv.securegkd.allocation.AllocationService;
+import com.shiv.securegkd.authentication.AuthenticationIdentityRepository;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameController;
 import com.shiv.securegkd.game.GameService;
@@ -46,6 +47,9 @@ class SecurityConfigurationTests {
 
     @MockitoBean
     private AllocationService allocationService;
+
+    @MockitoBean
+    private AuthenticationIdentityRepository authenticationIdentityRepository;
 
     @Test
     void healthIsPubliclyAccessible() throws Exception {

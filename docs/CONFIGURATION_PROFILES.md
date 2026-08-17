@@ -21,6 +21,14 @@ URL and username defaults are non-secret conveniences and apply only to the defa
 datasource environment variable is missing instead of falling back to a local
 database identity.
 
+Every runtime profile also requires `JWT_SIGNING_KEY_BASE64`, containing Base64 for
+at least 32 bytes of external signing material. There is no production or local
+fallback. `JWT_ACCESS_TOKEN_LIFETIME` configures the bounded access-token duration
+and defaults to `PT15M`; accepted values are whole seconds from one second through
+24 hours. Tests override only the signing key with runtime-generated, test-only
+material. See [API notes](API_NOTES.md) for the authentication flow and secret
+boundary.
+
 CI supplies the three datasource variables to the test process and uses its
 reproducible PostgreSQL service. Local PostgreSQL-backed test runs must supply those
 same variables through an untracked environment. Tests do not replace PostgreSQL
