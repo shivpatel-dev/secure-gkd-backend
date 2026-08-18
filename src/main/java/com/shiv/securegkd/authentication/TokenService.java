@@ -2,6 +2,7 @@ package com.shiv.securegkd.authentication;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -42,10 +43,17 @@ public class TokenService {
 
         Instant issuedAt = clock.instant();
         Instant expiresAt = issuedAt.plus(jwtProperties.accessTokenLifetime());
+        List<AuthenticationRole> roles = authentication.getAuthorities().stream()
+                .map(authority -> AuthenticationRole.fromAuthority(authority.getAuthority()))
+                .toList();
+        if (roles.size() != 1) {
+            throw new IllegalStateException("Authenticated identity must have exactly one application role");
+        }
         JwtClaimsSet claims = JwtClaimsSet.builder()
                 .subject(authentication.getName())
                 .issuedAt(issuedAt)
                 .expiresAt(expiresAt)
+                .claim("roles", List.of(roles.get(0).name()))
                 .build();
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
         String accessToken = jwtEncoder.encode(

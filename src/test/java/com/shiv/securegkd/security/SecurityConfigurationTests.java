@@ -6,6 +6,7 @@ import com.shiv.securegkd.allocation.AllocationRequest;
 import com.shiv.securegkd.allocation.AllocationResponse;
 import com.shiv.securegkd.allocation.AllocationService;
 import com.shiv.securegkd.authentication.AuthenticationIdentityRepository;
+import com.shiv.securegkd.game.CreateGameRequest;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameController;
 import com.shiv.securegkd.game.GameService;
@@ -77,13 +78,13 @@ class SecurityConfigurationTests {
     }
 
     @Test
-    void syntheticAuthenticatedPrincipalCanReachGameControllerBehavior() throws Exception {
+    void userCanReachGameControllerBehavior() throws Exception {
         Game game = new Game("GTA5", "Grand Theft Auto V");
         ReflectionTestUtils.setField(game, "id", 1L);
         ReflectionTestUtils.setField(game, "createdAt", CREATED_AT);
         when(gameService.findByCode("GTA5")).thenReturn(Optional.of(game));
 
-        mockMvc.perform(get("/api/games/GTA5").with(user("test-user")))
+        mockMvc.perform(get("/api/games/GTA5").with(user("test-user").roles("USER")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.code").value("GTA5"))
@@ -92,13 +93,13 @@ class SecurityConfigurationTests {
     }
 
     @Test
-    void authenticatedAllocationRequestPreservesControllerBehavior() throws Exception {
+    void userAllocationRequestPreservesControllerBehavior() throws Exception {
         AllocationRequest request = new AllocationRequest("request-1");
         AllocationResponse response = new AllocationResponse("GTA5", "GTA5-KEY-001", CREATED_AT);
         when(allocationService.allocate("GTA5", request)).thenReturn(response);
 
         mockMvc.perform(post("/api/games/GTA5/allocations")
-                        .with(user("test-user"))
+                        .with(user("test-user").roles("USER"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -108,8 +109,38 @@ class SecurityConfigurationTests {
     }
 
     @Test
+    void userCannotCreateGame() throws Exception {
+        mockMvc.perform(post("/api/games")
+                        .with(user("test-user").roles("USER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateGameRequest("GTA5", "Grand Theft Auto V")
+                        )))
+                .andExpect(status().isForbidden());
+
+        verifyNoInteractions(gameService);
+    }
+
+    @Test
+    void adminCanCreateGame() throws Exception {
+        Game game = new Game("GTA5", "Grand Theft Auto V");
+        ReflectionTestUtils.setField(game, "id", 1L);
+        ReflectionTestUtils.setField(game, "createdAt", CREATED_AT);
+        when(gameService.createGame("GTA5", "Grand Theft Auto V")).thenReturn(game);
+
+        mockMvc.perform(post("/api/games")
+                        .with(user("test-admin").roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new CreateGameRequest("GTA5", "Grand Theft Auto V")
+                        )))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value("GTA5"));
+    }
+
+    @Test
     void authenticatedRequestToUnclassifiedRouteIsForbidden() throws Exception {
-        mockMvc.perform(get("/api/unclassified").with(user("test-user")))
+        mockMvc.perform(get("/api/unclassified").with(user("test-user").roles("USER")))
                 .andExpect(status().isForbidden());
     }
 }
