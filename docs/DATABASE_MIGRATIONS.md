@@ -9,11 +9,13 @@ the normal application schema.
 `V1__create_initial_schema.sql` is the baseline for the `games`, `game_keys`,
 `allocations`, and `idempotency_records` model.
 `V2__create_authentication_identities.sql` adds the separate persisted identity used
-for credential authentication. A clean database is initialized by starting the
-application with a database user that can create the required objects; Flyway creates
-its schema-history table, applies pending versions in order, and records each
-successful migration. Starting the application again validates the recorded
-migrations and does not reapply them.
+for credential authentication. `V3__add_authentication_identity_roles.sql` adds the
+required, constrained `USER` or `ADMIN` role and assigns the conservative `USER`
+baseline to identities that already exist when the migration runs. A clean database
+is initialized by starting the application with a database user that can create the
+required objects; Flyway creates its schema-history table, applies pending versions
+in order, and records each successful migration. Starting the application again
+validates the recorded migrations and does not reapply them.
 
 Do not edit a migration after it has been applied. Every future schema change must be
 represented by a new migration with the next version. Review migrations together

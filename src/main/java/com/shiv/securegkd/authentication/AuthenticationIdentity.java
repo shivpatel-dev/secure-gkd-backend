@@ -2,12 +2,15 @@ package com.shiv.securegkd.authentication;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.Objects;
 
 @Entity
 @Table(name = "authentication_identities")
@@ -23,15 +26,20 @@ public class AuthenticationIdentity {
     @Column(name = "password_hash", nullable = false, length = 255)
     private String passwordHash;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 5)
+    private AuthenticationRole role;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
     protected AuthenticationIdentity() {
     }
 
-    public AuthenticationIdentity(String username, String passwordHash) {
+    public AuthenticationIdentity(String username, String passwordHash, AuthenticationRole role) {
         this.username = username;
         this.passwordHash = passwordHash;
+        this.role = Objects.requireNonNull(role, "role is required");
     }
 
     @PrePersist
@@ -51,6 +59,10 @@ public class AuthenticationIdentity {
 
     public String getPasswordHash() {
         return passwordHash;
+    }
+
+    public AuthenticationRole getRole() {
+        return role;
     }
 
     public Instant getCreatedAt() {

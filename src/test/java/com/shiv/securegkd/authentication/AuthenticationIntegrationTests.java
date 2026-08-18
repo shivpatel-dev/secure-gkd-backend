@@ -6,6 +6,12 @@ import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameRepository;
+import com.shiv.securegkd.game.CreateGameRequest;
+import com.shiv.securegkd.gamekey.GameKey;
+import com.shiv.securegkd.gamekey.GameKeyRepository;
+import com.shiv.securegkd.allocation.AllocationRepository;
+import com.shiv.securegkd.allocation.AllocationRequest;
+import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -23,6 +29,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
@@ -45,9 +53,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class AuthenticationIntegrationTests {
 
-    private static final String USERNAME = "auth-test-user";
+    private static final String USER_USERNAME = "auth-test-user";
+    private static final String ADMIN_USERNAME = "auth-test-admin";
     private static final String PASSWORD = "test-password-value";
     private static final String GAME_CODE = "AUTH-GAME";
+    private static final String CREATED_GAME_CODE = "AUTH-CREATED-GAME";
 
     @Autowired
     private MockMvc mockMvc;
@@ -62,7 +72,19 @@ class AuthenticationIntegrationTests {
     private GameRepository gameRepository;
 
     @Autowired
+    private GameKeyRepository gameKeyRepository;
+
+    @Autowired
+    private AllocationRepository allocationRepository;
+
+    @Autowired
+    private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private UserDetailsService userDetailsService;
 
     @Autowired
     private JwtDecoder jwtDecoder;
@@ -77,27 +99,36 @@ class AuthenticationIntegrationTests {
 
     @BeforeEach
     void setUp() {
-        identityRepository.deleteAllInBatch();
-        gameRepository.findByCode(GAME_CODE).ifPresent(gameRepository::delete);
+        deleteTestData();
 
         passwordHash = passwordEncoder.encode(PASSWORD);
-        identityRepository.saveAndFlush(new AuthenticationIdentity(USERNAME, passwordHash));
-        gameRepository.saveAndFlush(new Game(GAME_CODE, "Authentication Test Game"));
+        identityRepository.saveAndFlush(new AuthenticationIdentity(
+                USER_USERNAME,
+                passwordHash,
+                AuthenticationRole.USER
+        ));
+        identityRepository.saveAndFlush(new AuthenticationIdentity(
+                ADMIN_USERNAME,
+                passwordHash,
+                AuthenticationRole.ADMIN
+        ));
+        Game game = gameRepository.saveAndFlush(new Game(GAME_CODE, "Authentication Test Game"));
+        gameKeyRepository.saveAndFlush(new GameKey(game, "AUTH-KEY-USER"));
+        gameKeyRepository.saveAndFlush(new GameKey(game, "AUTH-KEY-ADMIN"));
     }
 
     @AfterEach
     void tearDown() {
-        identityRepository.deleteAllInBatch();
-        gameRepository.findByCode(GAME_CODE).ifPresent(gameRepository::delete);
+        deleteTestData();
     }
 
     @Test
-    void persistedEncodedCredentialsReturnMinimalBearerJwtWithStableBoundedClaims() throws Exception {
+    void userCredentialsReturnBearerJwtWithRoleAndStableBoundedClaims() throws Exception {
         Instant beforeRequest = Instant.now().truncatedTo(ChronoUnit.SECONDS);
 
         MvcResult result = mockMvc.perform(post("/api/auth/token")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(credentials(USERNAME, PASSWORD)))
+                        .content(credentials(USER_USERNAME, PASSWORD)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.tokenType").value("Bearer"))
                 .andExpect(jsonPath("$.expiresInSeconds")
@@ -118,12 +149,13 @@ class AuthenticationIntegrationTests {
                 .doesNotContain(passwordHash);
 
         Jwt jwt = jwtDecoder.decode(response.required("accessToken").textValue());
-        assertThat(jwt.getSubject()).isEqualTo(USERNAME);
+        assertThat(jwt.getSubject()).isEqualTo(USER_USERNAME);
         assertThat(jwt.getIssuedAt()).isBetween(beforeRequest, afterRequest);
         assertThat(jwt.getExpiresAt()).isEqualTo(
                 jwt.getIssuedAt().plus(jwtProperties.accessTokenLifetime())
         );
-        assertThat(jwt.getClaims().keySet()).containsExactlyInAnyOrder("sub", "iat", "exp");
+        assertThat(jwt.getClaimAsStringList("roles")).containsExactly("USER");
+        assertThat(jwt.getClaims().keySet()).containsExactlyInAnyOrder("sub", "iat", "exp", "roles");
         assertThat(jwt.getClaims().values())
                 .doesNotContain(PASSWORD)
                 .doesNotContain(passwordHash);
@@ -132,10 +164,31 @@ class AuthenticationIntegrationTests {
     }
 
     @Test
+    void persistedRolesBecomeCredentialAuthoritiesAndAdminJwtClaim() throws Exception {
+        assertThat(identityRepository.findByUsername(USER_USERNAME).orElseThrow().getRole())
+                .isEqualTo(AuthenticationRole.USER);
+        assertThat(identityRepository.findByUsername(ADMIN_USERNAME).orElseThrow().getRole())
+                .isEqualTo(AuthenticationRole.ADMIN);
+
+        UserDetails userDetails = userDetailsService.loadUserByUsername(USER_USERNAME);
+        UserDetails adminDetails = userDetailsService.loadUserByUsername(ADMIN_USERNAME);
+        assertThat(userDetails.getAuthorities())
+                .extracting("authority")
+                .containsExactly("ROLE_USER");
+        assertThat(adminDetails.getAuthorities())
+                .extracting("authority")
+                .containsExactly("ROLE_ADMIN");
+
+        Jwt adminJwt = jwtDecoder.decode(requestAccessToken(ADMIN_USERNAME));
+        assertThat(adminJwt.getSubject()).isEqualTo(ADMIN_USERNAME);
+        assertThat(adminJwt.getClaimAsStringList("roles")).containsExactly("ADMIN");
+    }
+
+    @Test
     void wrongPasswordAndUnknownUsernameReturnIndistinguishableUnauthorizedResponses() throws Exception {
         MvcResult wrongPassword = mockMvc.perform(post("/api/auth/token")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(credentials(USERNAME, "wrong-password")))
+                        .content(credentials(USER_USERNAME, "wrong-password")))
                 .andExpect(status().isUnauthorized())
                 .andReturn();
 
@@ -152,15 +205,69 @@ class AuthenticationIntegrationTests {
     }
 
     @Test
-    void validBearerTokenReachesGameControllerAndMissingTokenIsUnauthorized() throws Exception {
-        String accessToken = requestAccessToken();
+    void userTokenCanRetrieveAndAllocateButCannotCreateGame() throws Exception {
+        String accessToken = requestAccessToken(USER_USERNAME);
 
         mockMvc.perform(get("/api/games/{code}", GAME_CODE)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(GAME_CODE));
 
+        mockMvc.perform(post("/api/games/{gameCode}/allocations", GAME_CODE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(new AllocationRequest("auth-user-allocation"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.gameCode").value(GAME_CODE));
+
+        mockMvc.perform(post("/api/games")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(
+                                new CreateGameRequest(CREATED_GAME_CODE, "Created by user")
+                        )))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void adminTokenCanCreateRetrieveAndAllocate() throws Exception {
+        String accessToken = requestAccessToken(ADMIN_USERNAME);
+
+        mockMvc.perform(post("/api/games")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(
+                                new CreateGameRequest(CREATED_GAME_CODE, "Created by admin")
+                        )))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value(CREATED_GAME_CODE));
+
+        mockMvc.perform(get("/api/games/{code}", GAME_CODE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(GAME_CODE));
+
+        mockMvc.perform(post("/api/games/{gameCode}/allocations", GAME_CODE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(new AllocationRequest("auth-admin-allocation"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.gameCode").value(GAME_CODE));
+    }
+
+    @Test
+    void anonymousProtectedOperationsAreUnauthorized() throws Exception {
         mockMvc.perform(get("/api/games/{code}", GAME_CODE))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/games")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(
+                                new CreateGameRequest(CREATED_GAME_CODE, "Anonymous game")
+                        )))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/games/{gameCode}/allocations", GAME_CODE)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(new AllocationRequest("anonymous-allocation"))))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -184,7 +291,7 @@ class AuthenticationIntegrationTests {
     @Test
     void validJwtOnUnclassifiedRouteIsForbiddenAndHealthRemainsPublic() throws Exception {
         mockMvc.perform(get("/api/unclassified")
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + requestAccessToken()))
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + requestAccessToken(USER_USERNAME)))
                 .andExpect(status().isForbidden());
 
         mockMvc.perform(get("/api/health"))
@@ -196,10 +303,10 @@ class AuthenticationIntegrationTests {
         return objectMapper.writeValueAsBytes(new TokenRequest(username, password));
     }
 
-    private String requestAccessToken() throws Exception {
+    private String requestAccessToken(String username) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/token")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(credentials(USERNAME, PASSWORD)))
+                        .content(credentials(username, PASSWORD)))
                 .andExpect(status().isOk())
                 .andReturn();
         return objectMapper.readTree(result.getResponse().getContentAsByteArray())
@@ -220,11 +327,20 @@ class AuthenticationIntegrationTests {
 
     private String encode(JwtEncoder encoder, Instant issuedAt, Instant expiresAt) {
         JwtClaimsSet claims = JwtClaimsSet.builder()
-                .subject(USERNAME)
+                .subject(USER_USERNAME)
                 .issuedAt(issuedAt)
                 .expiresAt(expiresAt)
                 .build();
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
         return encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
+    }
+
+    private void deleteTestData() {
+        identityRepository.deleteAllInBatch();
+        idempotencyRecordRepository.deleteAllInBatch();
+        allocationRepository.deleteAllInBatch();
+        gameKeyRepository.deleteAllInBatch();
+        gameRepository.findByCode(GAME_CODE).ifPresent(gameRepository::delete);
+        gameRepository.findByCode(CREATED_GAME_CODE).ifPresent(gameRepository::delete);
     }
 }

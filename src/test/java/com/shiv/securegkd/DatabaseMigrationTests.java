@@ -5,6 +5,8 @@ import com.shiv.securegkd.allocation.AllocationRequest;
 import com.shiv.securegkd.allocation.AllocationResponse;
 import com.shiv.securegkd.allocation.AllocationService;
 import com.shiv.securegkd.authentication.AuthenticationIdentityRepository;
+import com.shiv.securegkd.authentication.AuthenticationIdentity;
+import com.shiv.securegkd.authentication.AuthenticationRole;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
@@ -12,6 +14,7 @@ import com.shiv.securegkd.gamekey.GameKeyRepository;
 import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;
+import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -19,13 +22,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
 import java.time.Duration;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
@@ -86,6 +92,15 @@ class DatabaseMigrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 select count(*)
                 from flyway_schema_history
+                where version = '3'
+                  and description = 'add authentication identity roles'
+                  and type = 'SQL'
+                  and success
+                """, Long.class)).isEqualTo(1L);
+
+        assertThat(jdbcTemplate.queryForObject("""
+                select count(*)
+                from flyway_schema_history
                 where version = '2'
                   and description = 'create authentication identities'
                   and type = 'SQL'
@@ -130,6 +145,7 @@ class DatabaseMigrationTests {
                 column("authentication_identities", "id", "bigint", false, null, null, true),
                 column("authentication_identities", "username", "character varying", false, 100, null, false),
                 column("authentication_identities", "password_hash", "character varying", false, 255, null, false),
+                column("authentication_identities", "role", "character varying", false, 5, null, false),
                 column("authentication_identities", "created_at", "timestamp with time zone", false, null, 6, false)
         );
 
@@ -162,6 +178,24 @@ class DatabaseMigrationTests {
                 "authentication_identities_username_key"
         );
 
+        assertThat(jdbcTemplate.queryForList("""
+                select constraint_name
+                from information_schema.table_constraints
+                where constraint_schema = current_schema()
+                  and table_name = 'authentication_identities'
+                  and constraint_type = 'CHECK'
+                """, String.class)).contains("authentication_identities_role_check");
+
+        AuthenticationIdentity administrator = authenticationIdentityRepository.saveAndFlush(
+                new AuthenticationIdentity(
+                        "migration-admin",
+                        "{noop}migration-password",
+                        AuthenticationRole.ADMIN
+                )
+        );
+        assertThat(authenticationIdentityRepository.findById(administrator.getId()).orElseThrow().getRole())
+                .isEqualTo(AuthenticationRole.ADMIN);
+
         Game game = gameRepository.saveAndFlush(new Game("MIGRATION-GAME", "Migration Test Game"));
         gameKeyRepository.saveAndFlush(new GameKey(game, "MIGRATION-KEY-001"));
 
@@ -191,8 +225,59 @@ class DatabaseMigrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version in ('1', '2') and success
-                """, Long.class)).isEqualTo(2L);
+                where version in ('1', '2', '3') and success
+                """, Long.class)).isEqualTo(3L);
+    }
+
+    @Test
+    void roleMigrationBackfillsExistingIdentitiesAndConstrainsApprovedValues() {
+        String schema = "role_migration_" + UUID.randomUUID().toString().replace("-", "");
+        Flyway versionTwoFlyway = isolatedFlyway(schema, MigrationVersion.fromVersion("2"));
+        Flyway currentFlyway = isolatedFlyway(schema, null);
+
+        try {
+            versionTwoFlyway.migrate();
+            jdbcTemplate.update("""
+                    insert into %s.authentication_identities (username, password_hash, created_at)
+                    values ('existing-user', '{noop}password', current_timestamp)
+                    """.formatted(schema));
+
+            MigrateResult migration = currentFlyway.migrate();
+
+            assertThat(migration.migrationsExecuted).isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject(
+                    "select role from %s.authentication_identities where username = 'existing-user'"
+                            .formatted(schema),
+                    String.class
+            )).isEqualTo("USER");
+            assertThatThrownBy(() -> jdbcTemplate.update("""
+                    insert into %s.authentication_identities
+                        (username, password_hash, role, created_at)
+                    values ('invalid-role', '{noop}password', 'OWNER', current_timestamp)
+                    """.formatted(schema)))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+            assertThatThrownBy(() -> jdbcTemplate.update("""
+                    insert into %s.authentication_identities
+                        (username, password_hash, role, created_at)
+                    values ('missing-role', '{noop}password', null, current_timestamp)
+                    """.formatted(schema)))
+                    .isInstanceOf(DataIntegrityViolationException.class);
+        } finally {
+            currentFlyway.clean();
+        }
+    }
+
+    private Flyway isolatedFlyway(String schema, MigrationVersion target) {
+        var configuration = Flyway.configure()
+                .dataSource(dataSource)
+                .defaultSchema(schema)
+                .schemas(schema)
+                .locations("classpath:db/migration")
+                .cleanDisabled(false);
+        if (target != null) {
+            configuration.target(target);
+        }
+        return configuration.load();
     }
 
     private List<ColumnMetadata> readApplicationColumns() {

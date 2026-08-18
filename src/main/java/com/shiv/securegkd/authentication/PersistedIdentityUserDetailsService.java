@@ -1,6 +1,5 @@
 package com.shiv.securegkd.authentication;
 
-import java.util.List;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -19,7 +18,7 @@ public class PersistedIdentityUserDetailsService implements UserDetailsService {
         return repository.findByUsername(username)
                 .map(identity -> User.withUsername(identity.getUsername())
                         .password(identity.getPasswordHash())
-                        .authorities(List.of())
+                        .authorities(identity.getRole().authority())
                         .build())
                 .orElseThrow(() -> new UsernameNotFoundException("Invalid credentials"));
     }
