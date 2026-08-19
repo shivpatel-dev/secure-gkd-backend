@@ -16,6 +16,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.SecretKeySpec;
@@ -28,6 +29,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AbstractAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -39,6 +41,7 @@ import org.springframework.security.oauth2.jwt.JwtEncoder;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -91,6 +94,9 @@ class AuthenticationIntegrationTests {
 
     @Autowired
     private JwtEncoder jwtEncoder;
+
+    @Autowired
+    private JwtAuthenticationConverter jwtAuthenticationConverter;
 
     @Autowired
     private JwtProperties jwtProperties;
@@ -289,6 +295,46 @@ class AuthenticationIntegrationTests {
     }
 
     @Test
+    void validJwtWithoutRolesAuthenticatesButIsForbiddenOnRoleProtectedRoute() throws Exception {
+        assertAuthenticatesWithoutApplicationAuthoritiesAndIsForbidden(
+                validlySignedToken(null)
+        );
+    }
+
+    @Test
+    void validJwtWithUnsupportedRoleAuthenticatesWithoutCreatingArbitraryAuthority() throws Exception {
+        assertAuthenticatesWithoutApplicationAuthoritiesAndIsForbidden(
+                validlySignedToken(List.of("SUPERUSER"))
+        );
+    }
+
+    @Test
+    void authorizedRequestsPreserveValidationAndNotFoundBehavior() throws Exception {
+        String adminAccessToken = requestAccessToken(ADMIN_USERNAME);
+        String userAccessToken = requestAccessToken(USER_USERNAME);
+
+        mockMvc.perform(post("/api/games")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + adminAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(new CreateGameRequest("", ""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.code").value("Game code must not be blank"))
+                .andExpect(jsonPath("$.fieldErrors.title").value("Game title must not be blank"));
+
+        mockMvc.perform(post("/api/games/{gameCode}/allocations", GAME_CODE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userAccessToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(new AllocationRequest(""))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.idempotencyKey")
+                        .value("idempotencyKey is required"));
+
+        mockMvc.perform(get("/api/games/{code}", "AUTH-MISSING-GAME")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + userAccessToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void validJwtOnUnclassifiedRouteIsForbiddenAndHealthRemainsPublic() throws Exception {
         mockMvc.perform(get("/api/unclassified")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + requestAccessToken(USER_USERNAME)))
@@ -325,14 +371,45 @@ class AuthenticationIntegrationTests {
         return encode(otherEncoder, now, now.plusSeconds(60));
     }
 
+    private String validlySignedToken(List<String> roles) {
+        Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+        return encode(jwtEncoder, now, now.plusSeconds(60), roles);
+    }
+
     private String encode(JwtEncoder encoder, Instant issuedAt, Instant expiresAt) {
-        JwtClaimsSet claims = JwtClaimsSet.builder()
+        return encode(encoder, issuedAt, expiresAt, null);
+    }
+
+    private String encode(
+            JwtEncoder encoder,
+            Instant issuedAt,
+            Instant expiresAt,
+            List<String> roles
+    ) {
+        JwtClaimsSet.Builder claimsBuilder = JwtClaimsSet.builder()
                 .subject(USER_USERNAME)
                 .issuedAt(issuedAt)
-                .expiresAt(expiresAt)
-                .build();
+                .expiresAt(expiresAt);
+        if (roles != null) {
+            claimsBuilder.claim("roles", roles);
+        }
         JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
-        return encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();
+        return encoder.encode(JwtEncoderParameters.from(header, claimsBuilder.build())).getTokenValue();
+    }
+
+    private void assertAuthenticatesWithoutApplicationAuthoritiesAndIsForbidden(
+            String accessToken
+    ) throws Exception {
+        mockMvc.perform(get("/api/games/{code}", GAME_CODE)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+                .andExpect(status().isForbidden());
+
+        AbstractAuthenticationToken authentication = jwtAuthenticationConverter.convert(
+                jwtDecoder.decode(accessToken)
+        );
+        assertThat(authentication).isNotNull();
+        assertThat(authentication.isAuthenticated()).isTrue();
+        assertThat(authentication.getAuthorities()).isEmpty();
     }
 
     private void deleteTestData() {
