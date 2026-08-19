@@ -36,6 +36,12 @@ class ConfigurationProfilesTests {
         assertThat(resolver.getRequiredProperty("spring.flyway.validate-on-migrate", Boolean.class)).isTrue();
         assertThat(resolver.getRequiredProperty("secure-gkd.security.jwt.access-token-lifetime"))
                 .isEqualTo("PT15M");
+        assertThat(resolver.getRequiredProperty("server.error.include-exception", Boolean.class))
+                .isFalse();
+        assertThat(resolver.getRequiredProperty("server.error.include-message")).isEqualTo("never");
+        assertThat(resolver.getRequiredProperty("server.error.include-stacktrace")).isEqualTo("never");
+        assertThat(resolver.getRequiredProperty("server.error.include-binding-errors"))
+                .isEqualTo("never");
         assertThatThrownBy(() -> resolver.getRequiredProperty(
                 "secure-gkd.security.jwt.signing-key-base64"
         ))

@@ -14,6 +14,7 @@ import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 import java.time.Instant;
 
 import static org.hamcrest.Matchers.notNullValue;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -84,5 +85,34 @@ class AllocationControllerTests {
                 .andExpect(status().isBadRequest());
 
         verifyNoInteractions(allocationService);
+    }
+
+    @Test
+    void unexpectedServiceFailureReturnsSafeGenericInternalError() throws Exception {
+        AllocationRequest request = new AllocationRequest("request-1");
+        when(allocationService.allocate("GTA5", request)).thenThrow(new IllegalStateException(
+                "TEST_ONLY_INTERNAL_DETAIL",
+                new IllegalArgumentException("TEST_ONLY_CAUSE_DETAIL")
+        ));
+
+        String responseBody = mockMvc.perform(post("/api/games/GTA5/allocations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.timestamp", notNullValue()))
+                .andExpect(jsonPath("$.status").value(500))
+                .andExpect(jsonPath("$.error").value("Internal Server Error"))
+                .andExpect(jsonPath("$.message").value("An unexpected error occurred"))
+                .andExpect(jsonPath("$.path").value("/api/games/GTA5/allocations"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(responseBody)
+                .doesNotContain("TEST_ONLY_INTERNAL_DETAIL")
+                .doesNotContain("TEST_ONLY_CAUSE_DETAIL")
+                .doesNotContain(IllegalStateException.class.getName())
+                .doesNotContain(IllegalArgumentException.class.getName());
     }
 }

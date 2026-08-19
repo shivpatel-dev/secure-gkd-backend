@@ -168,8 +168,9 @@ For a new idempotency key, an empty result from `GameRepository.findByCode` caus
 
 `IllegalArgumentException("Game not found: " + gameCode)`
 
-No key or allocation persistence follows. There is no project-specific exception
-handler for this exception, so it propagates to Spring's normal error handling.
+No key or allocation persistence follows. There is no allocation-specific HTTP status
+for this exception. The generic unexpected-failure boundary returns the common safe
+`500 Internal Server Error` `ApiError` without exposing the exception message.
 
 ### No available game key
 
@@ -177,8 +178,9 @@ If the game exists but `findAvailableByGame` returns no rows, the service causes
 
 `IllegalStateException("No available game keys for game: " + gameCode)`
 
-No allocation or idempotency record is saved. There is no project-specific exception
-handler for this exception, so it propagates to Spring's normal error handling.
+No allocation or idempotency record is saved. There is no allocation-specific HTTP
+status for this exception. The generic unexpected-failure boundary returns the common
+safe `500 Internal Server Error` `ApiError` without exposing the exception message.
 
 ### Duplicate-allocation race or database constraint failure
 
@@ -192,8 +194,10 @@ as:
 
 `IllegalStateException("Selected game key is no longer available for game: " + gameCode, cause)`
 
-The idempotency record is not saved after this failure. The exception is not mapped by
-a project-specific handler and therefore propagates to Spring's normal error handling.
+The idempotency record is not saved after this failure. No dedicated allocation-domain
+HTTP status is introduced; the generic unexpected-failure boundary returns the common
+safe `500 Internal Server Error` `ApiError` without exposing the outer exception or
+its cause chain.
 
 `IdempotencyRecord` has separate unique constraints on `idempotency_key` and
 `allocation_id`. These constraints preserve a unique key-to-allocation mapping. The
@@ -205,7 +209,8 @@ constraint failure from that operation.
 Use the following breakpoints in order, stopping when the observed path diverges:
 
 1. `GlobalExceptionHandler.handleValidationException` to inspect request validation
-   failures and field errors.
+   failures and field errors, or `handleUnexpectedException` to inspect an unexpected
+   failure retained for server-side diagnostics but omitted from the public body.
 2. `AllocationController.allocate` to confirm a valid `gameCode` and
    `AllocationRequest` reached the controller.
 3. `AllocationService.allocate` at the idempotency lookup to distinguish replay from
@@ -230,7 +235,9 @@ orders the remaining keys by ID.
 - `AllocationControllerTests`
   - verifies `201 Created` and the response fields for a valid request;
   - verifies blank-key validation and the `400 Bad Request` body;
-  - verifies validation failure does not call the service.
+  - verifies validation failure does not call the service;
+  - verifies a representative unexpected service exception returns the safe generic
+    `500` body without its internal message, cause detail, or exception class names.
 - `AllocationServiceTests`
   - covers a successful new allocation and the page size of one;
   - covers returning the original allocation for an existing idempotency key;

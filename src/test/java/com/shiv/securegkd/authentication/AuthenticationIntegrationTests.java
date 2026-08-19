@@ -2,6 +2,7 @@ package com.shiv.securegkd.authentication;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import com.nimbusds.jose.proc.SecurityContext;
 import com.shiv.securegkd.game.Game;
@@ -204,10 +205,37 @@ class AuthenticationIntegrationTests {
                 .andExpect(status().isUnauthorized())
                 .andReturn();
 
-        assertThat(wrongPassword.getResponse().getContentAsByteArray()).isEmpty();
-        assertThat(unknownUsername.getResponse().getContentAsByteArray()).isEmpty();
-        assertThat(unknownUsername.getResponse().getHeaderNames())
-                .containsExactlyInAnyOrderElementsOf(wrongPassword.getResponse().getHeaderNames());
+        JsonNode wrongPasswordBody = objectMapper.readTree(
+                wrongPassword.getResponse().getContentAsByteArray()
+        );
+        JsonNode unknownUsernameBody = objectMapper.readTree(
+                unknownUsername.getResponse().getContentAsByteArray()
+        );
+        assertThat(wrongPasswordBody.required("timestamp").textValue()).isNotBlank();
+        assertThat(wrongPasswordBody.required("status").intValue()).isEqualTo(401);
+        assertThat(wrongPasswordBody.required("error").textValue()).isEqualTo("Unauthorized");
+        assertThat(wrongPasswordBody.required("message").textValue())
+                .isEqualTo("Authentication required");
+        assertThat(wrongPasswordBody.required("path").textValue()).isEqualTo("/api/auth/token");
+        assertThat(wrongPasswordBody.required("fieldErrors").isEmpty()).isTrue();
+        assertThat(wrongPassword.getResponse().getContentType())
+                .startsWith(MediaType.APPLICATION_JSON_VALUE);
+        assertThat(unknownUsername.getResponse().getContentType())
+                .startsWith(MediaType.APPLICATION_JSON_VALUE);
+
+        ObjectNode normalizedWrongPassword = wrongPasswordBody.deepCopy();
+        ObjectNode normalizedUnknownUsername = unknownUsernameBody.deepCopy();
+        normalizedWrongPassword.remove("timestamp");
+        normalizedUnknownUsername.remove("timestamp");
+        assertThat(normalizedUnknownUsername).isEqualTo(normalizedWrongPassword);
+        assertThat(wrongPassword.getResponse().getContentAsString())
+                .doesNotContain("wrong-password")
+                .doesNotContain(PASSWORD)
+                .doesNotContain(passwordHash);
+        assertThat(unknownUsername.getResponse().getContentAsString())
+                .doesNotContain("unknown-user")
+                .doesNotContain(PASSWORD)
+                .doesNotContain(passwordHash);
     }
 
     @Test
@@ -279,19 +307,28 @@ class AuthenticationIntegrationTests {
 
     @Test
     void malformedIncorrectlySignedAndExpiredBearerTokensAreUnauthorized() throws Exception {
-        mockMvc.perform(get("/api/games/{code}", GAME_CODE)
+        MvcResult malformed = mockMvc.perform(get("/api/games/{code}", GAME_CODE)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer malformed-token"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andReturn();
+        assertCommonError(malformed, 401, "Unauthorized", "Authentication required",
+                "/api/games/" + GAME_CODE);
 
-        mockMvc.perform(get("/api/games/{code}", GAME_CODE)
+        MvcResult incorrectlySigned = mockMvc.perform(get("/api/games/{code}", GAME_CODE)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + incorrectlySignedToken()))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andReturn();
+        assertCommonError(incorrectlySigned, 401, "Unauthorized", "Authentication required",
+                "/api/games/" + GAME_CODE);
 
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
         String expiredToken = encode(jwtEncoder, now.minusSeconds(120), now.minusSeconds(60));
-        mockMvc.perform(get("/api/games/{code}", GAME_CODE)
+        MvcResult expired = mockMvc.perform(get("/api/games/{code}", GAME_CODE)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + expiredToken))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andReturn();
+        assertCommonError(expired, 401, "Unauthorized", "Authentication required",
+                "/api/games/" + GAME_CODE);
     }
 
     @Test
@@ -331,14 +368,24 @@ class AuthenticationIntegrationTests {
 
         mockMvc.perform(get("/api/games/{code}", "AUTH-MISSING-GAME")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + userAccessToken))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("Game not found"))
+                .andExpect(jsonPath("$.path").value("/api/games/AUTH-MISSING-GAME"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
     }
 
     @Test
     void validJwtOnUnclassifiedRouteIsForbiddenAndHealthRemainsPublic() throws Exception {
         mockMvc.perform(get("/api/unclassified")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + requestAccessToken(USER_USERNAME)))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.error").value("Forbidden"))
+                .andExpect(jsonPath("$.message").value("Access denied"))
+                .andExpect(jsonPath("$.path").value("/api/unclassified"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
 
         mockMvc.perform(get("/api/health"))
                 .andExpect(status().isOk())
@@ -402,7 +449,12 @@ class AuthenticationIntegrationTests {
     ) throws Exception {
         mockMvc.perform(get("/api/games/{code}", GAME_CODE)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.error").value("Forbidden"))
+                .andExpect(jsonPath("$.message").value("Access denied"))
+                .andExpect(jsonPath("$.path").value("/api/games/" + GAME_CODE))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
 
         AbstractAuthenticationToken authentication = jwtAuthenticationConverter.convert(
                 jwtDecoder.decode(accessToken)
@@ -410,6 +462,23 @@ class AuthenticationIntegrationTests {
         assertThat(authentication).isNotNull();
         assertThat(authentication.isAuthenticated()).isTrue();
         assertThat(authentication.getAuthorities()).isEmpty();
+    }
+
+    private void assertCommonError(
+            MvcResult result,
+            int status,
+            String error,
+            String message,
+            String path
+    ) throws Exception {
+        JsonNode body = objectMapper.readTree(result.getResponse().getContentAsByteArray());
+        assertThat(result.getResponse().getContentType()).startsWith(MediaType.APPLICATION_JSON_VALUE);
+        assertThat(body.required("timestamp").textValue()).isNotBlank();
+        assertThat(body.required("status").intValue()).isEqualTo(status);
+        assertThat(body.required("error").textValue()).isEqualTo(error);
+        assertThat(body.required("message").textValue()).isEqualTo(message);
+        assertThat(body.required("path").textValue()).isEqualTo(path);
+        assertThat(body.required("fieldErrors").isEmpty()).isTrue();
     }
 
     private void deleteTestData() {

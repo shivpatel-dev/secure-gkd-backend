@@ -48,13 +48,14 @@ These are related views of a failure, but they are not interchangeable:
   frames around the useful application frames. Whether a trace is logged, and how much
   is shown, depends on the runtime and logging configuration.
 
-`GlobalExceptionHandler` currently handles only
-`MethodArgumentNotValidException`. It returns the project's `ApiError` body with
-`400 Bad Request`. The allocation service's `IllegalArgumentException` and
-`IllegalStateException` failures have no project-specific handler. They leave the
-controller invocation and continue through Spring's normal error handling; the current
-project code and inspected tests do not define their final HTTP body or prove what was
-logged at runtime.
+`GlobalExceptionHandler` maps `MethodArgumentNotValidException` to the project's
+`400 Bad Request` `ApiError` with field errors. Its generic unexpected-failure boundary
+maps allocation service `IllegalArgumentException` and `IllegalStateException`
+failures to a safe `500 Internal Server Error` `ApiError` with empty `fieldErrors`.
+The service exceptions and their cause chains remain available to server-side
+diagnostics but are not serialized into the public response. This source-derived
+contract does not change the original evidence limits above or prove what a deployed
+runtime logged.
 
 ## Reading an exception chain
 
@@ -109,9 +110,8 @@ annotated with `@Valid`. A missing JSON property (which binds as `null`), an emp
 string, or a whitespace-only string violates `@NotBlank`. Validation occurs before the
 controller method body runs.
 
-Spring raises `MethodArgumentNotValidException`, which is the one failure in this
-document handled by `GlobalExceptionHandler`. The handler returns `400 Bad Request`
-with an `ApiError` containing:
+Spring raises `MethodArgumentNotValidException`, which the validation-specific method
+in `GlobalExceptionHandler` maps to `400 Bad Request` with an `ApiError` containing:
 
 - `error`: `Bad Request`
 - `message`: `Validation failed`
@@ -152,10 +152,10 @@ For a new idempotency key, `GameRepository.findByCode(gameCode)` returning empty
 `IllegalArgumentException("Game not found: " + gameCode)`
 
 The exception is created in `AllocationService.allocateNewGameKey`. It has no explicit
-cause. Key selection and allocation persistence are not reached. Because
-`GlobalExceptionHandler` has no handler for `IllegalArgumentException`, the exception
-propagates through Spring's normal error handling rather than being converted to the
-project's validation `ApiError`.
+cause. Key selection and allocation persistence are not reached. The generic
+unexpected-failure handler returns the common safe `500 Internal Server Error`
+`ApiError`; it does not expose the exception message or introduce an allocation-domain
+status mapping.
 
 **Useful breakpoints**
 
@@ -171,8 +171,9 @@ project's validation `ApiError`.
   asserts the exception type and `Game not found: UNKNOWN` message. It also asserts
   that the game-key and allocation repositories are not called and that no
   idempotency record is saved.
-- The inspected controller tests do not assert an HTTP response or logging behavior
-  for this service exception.
+- The focused controller test covers a representative allocation service exception at
+  the HTTP boundary and asserts the safe generic `500` contract. It does not reproduce
+  this exact missing-Game service path.
 
 **Original runtime reproduction:** None. No later reproduction is linked for this
 missing-game path.
@@ -188,9 +189,9 @@ the service causes:
 `IllegalStateException("No available game keys for game: " + gameCode)`
 
 The exception is created in `AllocationService.allocateNewGameKey` and has no explicit
-cause. Allocation and idempotency-record persistence are not reached.
-`GlobalExceptionHandler` has no handler for `IllegalStateException`, so this exception
-also propagates through Spring's normal error handling.
+cause. Allocation and idempotency-record persistence are not reached. The generic
+unexpected-failure handler returns the common safe `500 Internal Server Error`
+`ApiError` without exposing the exception message.
 
 **Useful breakpoints**
 
@@ -209,8 +210,9 @@ also propagates through Spring's normal error handling.
 - `GameKeyRepositoryTests.findAvailableByGameExcludesAllocatedGameKeys` and
   `findAvailableByGameReturnsFirstAvailableGameKeyWhenLimitedToOne` cover the
   repository query behavior relevant to deciding whether a key is available.
-- The inspected controller tests do not assert an HTTP response or logging behavior
-  for this service exception.
+- The focused controller test covers a representative allocation service exception at
+  the HTTP boundary and asserts the safe generic `500` contract. It does not reproduce
+  this exact no-available-key service path.
 
 **Original runtime reproduction:** None. No later reproduction is linked for this
 no-available-key path.
@@ -233,10 +235,10 @@ persistence-layer failure into the allocation-specific message without discardin
 cause chain. The idempotency-record save follows this method and is not reached after
 the translated failure.
 
-`GlobalExceptionHandler` has no handler for either the outer
-`IllegalStateException` or its `DataIntegrityViolationException` cause. The outer
-exception propagates through Spring's normal error handling. The project does not
-currently define a dedicated HTTP response contract for this failure.
+The generic unexpected-failure handler maps the outer `IllegalStateException` to the
+common safe `500 Internal Server Error` `ApiError`. Neither its message nor the
+`DataIntegrityViolationException` cause is placed in the public response. The project
+still does not define a dedicated allocation-domain HTTP status for this failure.
 
 **Useful breakpoints**
 
@@ -264,6 +266,10 @@ currently define a dedicated HTTP response contract for this failure.
   the service, Spring, Hibernate, and PostgreSQL cause chain and the final database
   state for a controlled collision. It did not exercise the HTTP layer or assert
   logged output.
+- The focused controller test covers a representative allocation service exception at
+  the HTTP boundary and asserts that the generic `500` body omits a test-only internal
+  message, cause detail, and exception class names. It does not reproduce a database
+  collision.
 
 **Original runtime reproduction:** None. **Later PostgreSQL-backed integration
 evidence:** the controlled collision documented in

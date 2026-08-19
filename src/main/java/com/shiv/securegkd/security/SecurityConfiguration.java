@@ -1,5 +1,7 @@
 package com.shiv.securegkd.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shiv.securegkd.ApiError;
 import com.shiv.securegkd.authentication.AuthenticationIdentityRepository;
 import com.shiv.securegkd.authentication.AuthenticationRole;
 import com.shiv.securegkd.authentication.JwtProperties;
@@ -17,6 +19,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.ProviderManager;
@@ -37,8 +40,8 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.access.HttpStatusAccessDeniedHandler;
-import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.access.AccessDeniedHandler;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(JwtProperties.class)
@@ -47,8 +50,30 @@ public class SecurityConfiguration {
     @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            JwtAuthenticationConverter jwtAuthenticationConverter
+            JwtAuthenticationConverter jwtAuthenticationConverter,
+            ObjectMapper objectMapper
     ) throws Exception {
+        AuthenticationEntryPoint authenticationEntryPoint = (request, response, exception) -> {
+            response.setStatus(HttpStatus.UNAUTHORIZED.value());
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            objectMapper.writeValue(
+                    response.getOutputStream(),
+                    ApiError.of(
+                            HttpStatus.UNAUTHORIZED,
+                            "Authentication required",
+                            request.getRequestURI()
+                    )
+            );
+        };
+        AccessDeniedHandler accessDeniedHandler = (request, response, exception) -> {
+            response.setStatus(HttpStatus.FORBIDDEN.value());
+            response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+            objectMapper.writeValue(
+                    response.getOutputStream(),
+                    ApiError.of(HttpStatus.FORBIDDEN, "Access denied", request.getRequestURI())
+            );
+        };
+
         http
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
@@ -61,8 +86,8 @@ public class SecurityConfiguration {
                         .anyRequest().denyAll()
                 )
                 .exceptionHandling(exceptions -> exceptions
-                        .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED))
-                        .accessDeniedHandler(new HttpStatusAccessDeniedHandler(HttpStatus.FORBIDDEN))
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler)
                 )
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
@@ -72,9 +97,11 @@ public class SecurityConfiguration {
                 .logout(AbstractHttpConfigurer::disable)
                 // This API does not use cookie-based authentication. Revisit CSRF if that changes.
                 .csrf(AbstractHttpConfigurer::disable)
-                .oauth2ResourceServer(resourceServer -> resourceServer.jwt(jwt -> jwt
-                        .jwtAuthenticationConverter(jwtAuthenticationConverter)
-                ));
+                .oauth2ResourceServer(resourceServer -> resourceServer
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler)
+                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))
+                );
 
         return http.build();
     }

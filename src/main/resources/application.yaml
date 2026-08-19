@@ -24,3 +24,10 @@ secure-gkd:
     jwt:
       signing-key-base64: ${JWT_SIGNING_KEY_BASE64}
       access-token-lifetime: ${JWT_ACCESS_TOKEN_LIFETIME:PT15M}
+
+server:
+  error:
+    include-exception: false
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never

@@ -34,6 +34,6 @@ public class GameController {
         return gameService.findByCode(code)
                 .map(GameResponse::from)
                 .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+                .orElseThrow(GameNotFoundException::new);
     }
 }
