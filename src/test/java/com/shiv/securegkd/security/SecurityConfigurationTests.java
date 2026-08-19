@@ -28,6 +28,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -62,7 +63,30 @@ class SecurityConfigurationTests {
     @Test
     void anonymousGameRequestIsUnauthorized() throws Exception {
         mockMvc.perform(get("/api/games/GTA5"))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.timestamp").isNotEmpty())
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").value("Unauthorized"))
+                .andExpect(jsonPath("$.message").value("Authentication required"))
+                .andExpect(jsonPath("$.path").value("/api/games/GTA5"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
+
+        verifyNoInteractions(gameService);
+    }
+
+    @Test
+    void invalidBearerTokenIsUnauthorizedWithStructuredError() throws Exception {
+        mockMvc.perform(get("/api/games/GTA5")
+                        .header("Authorization", "Bearer malformed-token"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.timestamp").isNotEmpty())
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").value("Unauthorized"))
+                .andExpect(jsonPath("$.message").value("Authentication required"))
+                .andExpect(jsonPath("$.path").value("/api/games/GTA5"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
 
         verifyNoInteractions(gameService);
     }
@@ -115,8 +139,15 @@ class SecurityConfigurationTests {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new CreateGameRequest("GTA5", "Grand Theft Auto V")
-                        )))
-                .andExpect(status().isForbidden());
+                )))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.timestamp").isNotEmpty())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.error").value("Forbidden"))
+                .andExpect(jsonPath("$.message").value("Access denied"))
+                .andExpect(jsonPath("$.path").value("/api/games"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
 
         verifyNoInteractions(gameService);
     }
@@ -141,6 +172,13 @@ class SecurityConfigurationTests {
     @Test
     void authenticatedRequestToUnclassifiedRouteIsForbidden() throws Exception {
         mockMvc.perform(get("/api/unclassified").with(user("test-user").roles("USER")))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.timestamp").isNotEmpty())
+                .andExpect(jsonPath("$.status").value(403))
+                .andExpect(jsonPath("$.error").value("Forbidden"))
+                .andExpect(jsonPath("$.message").value("Access denied"))
+                .andExpect(jsonPath("$.path").value("/api/unclassified"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
     }
 }

@@ -40,3 +40,34 @@ ephemeral signing material from test-only configuration.
 
 Authorization continues to use the stateless Bearer-token model. The application
 does not enable HTTP Basic, form login, cookies, or sessions.
+
+## Public error responses
+
+Covered API failures use one JSON structure:
+
+| Field | Meaning |
+| --- | --- |
+| `timestamp` | Time when the response was created. |
+| `status` | Numeric HTTP status. |
+| `error` | Standard HTTP status phrase. |
+| `message` | Safe public description of the failure category. |
+| `path` | Request path. |
+| `fieldErrors` | Field-specific Bean Validation messages, or `{}` for non-validation failures. |
+
+The covered statuses are:
+
+- `400 Bad Request` for an authorized request that fails Bean Validation;
+- `401 Unauthorized` for missing or unacceptable Bearer authentication and for
+  incorrect credentials at the token endpoint;
+- `403 Forbidden` for valid authentication without sufficient authority, including
+  unclassified routes denied by the secure default;
+- `404 Not Found` when Game retrieval cannot find the requested Game;
+- `500 Internal Server Error` for unexpected application failures without an
+  established public error mapping.
+
+Authentication failures intentionally do not distinguish an unknown username from an
+incorrect password. Internal exception types, messages, causes, stack traces, SQL and
+database details, credentials, tokens, signing material, secret game-key values,
+private environment values, and machine-specific details are not part of the public
+error contract. Unexpected failures retain server-side diagnostic handling while the
+client receives only the generic public `500` response.

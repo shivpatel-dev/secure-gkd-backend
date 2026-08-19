@@ -17,9 +17,11 @@ import java.util.Optional;
 
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -111,6 +113,16 @@ class GameControllerTests {
     }
 
     @Test
+    void malformedJsonRetainsFrameworkBadRequestStatus() throws Exception {
+        mockMvc.perform(post("/api/games")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"code\":\"GTA5\",\"title\":"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(gameService);
+    }
+
+    @Test
     void getGameByCodeReturnsOkWhenFound() throws Exception {
         when(gameService.findByCode("GTA5")).thenReturn(Optional.of(game(1L, "GTA5", "Grand Theft Auto V")));
 
@@ -135,7 +147,14 @@ class GameControllerTests {
         when(gameService.findByCode("MISSING")).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/api/games/MISSING"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.timestamp", notNullValue()))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.error").value("Not Found"))
+                .andExpect(jsonPath("$.message").value("Game not found"))
+                .andExpect(jsonPath("$.path").value("/api/games/MISSING"))
+                .andExpect(jsonPath("$.fieldErrors").isEmpty());
     }
 
     private Game game(Long id, String code, String title) {

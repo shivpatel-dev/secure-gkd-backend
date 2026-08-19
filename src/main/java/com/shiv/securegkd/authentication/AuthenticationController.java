@@ -1,9 +1,7 @@
 package com.shiv.securegkd.authentication;
 
 import jakarta.validation.Valid;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,10 +19,6 @@ public class AuthenticationController {
 
     @PostMapping("/token")
     public ResponseEntity<TokenResponse> token(@Valid @RequestBody TokenRequest request) {
-        try {
-            return ResponseEntity.ok(tokenService.issue(request));
-        } catch (BadCredentialsException exception) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        }
+        return ResponseEntity.ok(tokenService.issue(request));
     }
 }
