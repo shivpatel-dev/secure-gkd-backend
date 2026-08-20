@@ -44,6 +44,13 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ApiError> handleBadCredentials(HttpServletRequest request) {
+        LOGGER.warn(
+                "event=credential_authentication_rejected requestId={} method={} path={} status={}",
+                RequestCorrelationFilter.currentRequestId(),
+                request.getMethod(),
+                request.getRequestURI(),
+                HttpStatus.UNAUTHORIZED.value()
+        );
         return errorResponse(
                 HttpStatus.UNAUTHORIZED,
                 "Authentication required",
@@ -65,7 +72,15 @@ public class GlobalExceptionHandler {
             throw exception;
         }
 
-        LOGGER.error("Unhandled exception while processing {}", request.getRequestURI(), exception);
+        LOGGER.error(
+                "event=unexpected_application_failure requestId={} method={} path={} status={} "
+                        + "exceptionType={}",
+                RequestCorrelationFilter.currentRequestId(),
+                request.getMethod(),
+                request.getRequestURI(),
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                exception.getClass().getSimpleName()
+        );
         return errorResponse(
                 HttpStatus.INTERNAL_SERVER_ERROR,
                 "An unexpected error occurred",

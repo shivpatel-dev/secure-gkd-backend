@@ -52,10 +52,13 @@ These are related views of a failure, but they are not interchangeable:
 `400 Bad Request` `ApiError` with field errors. Its generic unexpected-failure boundary
 maps allocation service `IllegalArgumentException` and `IllegalStateException`
 failures to a safe `500 Internal Server Error` `ApiError` with empty `fieldErrors`.
-The service exceptions and their cause chains remain available to server-side
-diagnostics but are not serialized into the public response. This source-derived
-contract does not change the original evidence limits above or prove what a deployed
-runtime logged.
+It also writes one bounded application-owned event containing the request identifier,
+method, path, status, and exception type. It deliberately does not pass the Throwable
+to the logger or log its message or cause chain. The exception object remains
+available to an attached debugger while it is in process, but its uncontrolled
+details are neither serialized into the public response nor copied into that
+application event. This source-derived contract does not change the original evidence
+limits above or prove deployed log volume or third-party logging behavior.
 
 ## Reading an exception chain
 
@@ -270,6 +273,10 @@ still does not define a dedicated allocation-domain HTTP status for this failure
   the HTTP boundary and asserts that the generic `500` body omits a test-only internal
   message, cause detail, and exception class names. It does not reproduce a database
   collision.
+- `OperationalLoggingTests` uses mock-based MVC evidence to verify that a
+  representative unexpected allocation failure keeps the generic `500` body, emits
+  a bounded event correlated by `X-Request-Id`, and omits test-only exception-message
+  and cause markers from the application-owned event.
 
 **Original runtime reproduction:** None. **Later PostgreSQL-backed integration
 evidence:** the controlled collision documented in
