@@ -187,14 +187,23 @@ The detailed evidence remains in:
 
 ### Excessive or sensitive logging
 
-- **Current implementation and evidence:** static inspection finds no production
-  logger calls and no tracked logging-level configuration. Some integration tests emit
+- **Current implementation and evidence:** static inspection finds a small set of
+  production application logger calls in `GlobalExceptionHandler` and
+  `SecurityConfiguration`: bounded events for unexpected failures, rejected
+  credentials, supplied-Bearer rejection, and authorization denial. Request
+  correlation uses `X-Request-Id` and MDC but adds no routine success/access event.
+  No tracked logging-level configuration is present. Some integration tests also emit
   bounded diagnostics through test loggers or `System.out`; prior datasource and SQL
-  investigations used command-line-only logging. Those are temporary test diagnostics,
-  not permanent production logging. No deployed log sample or volume was inspected.
-- **Status and consequence:** **not observed in production source; deployed behavior
-  is unverified**. Excessive logging could add I/O/storage cost, while sensitive fields
-  or exception details could create disclosure risk.
+  investigations used command-line-only logging. Those remain temporary test
+  diagnostics, not additional production logging. No deployed log sample or volume
+  was inspected.
+- **Status and consequence:** **not observed as a production problem; deployed
+  behavior is unverified**. The application events deliberately exclude request and
+  response bodies, credentials, tokens, secret game-key values, uncontrolled
+  exception messages and causes, and Throwable dumps. That boundary applies to
+  application-owned logging rather than every third-party component under arbitrary
+  configuration. Excessive logging could still add I/O/storage cost, while a future
+  unsafe field could create disclosure risk.
 - **Investigate when:** deployed log-rate/storage metrics grow, request latency
   correlates with logging, or a controlled review finds credentials, keys, request
   bodies, or unredacted sensitive exception data.
@@ -237,10 +246,12 @@ The detailed evidence remains in:
 
 ## Inspection and verification for this assessment
 
-The assessment used source and documentation inspection only; it did not run the
-application, Maven tests, PostgreSQL queries, query plans, or a new JFR recording.
+The original assessment used source and documentation inspection only; it did not run
+the application, Maven tests, PostgreSQL queries, query plans, or a new JFR recording.
 PostgreSQL and running-server claims above are reused from the linked records, which
 contain their exact commands, observation procedures, results, and limitations.
+The later operational-logging update adds static source inspection and mock-based MVC
+test evidence; it adds no deployed-log sample or production-volume claim.
 
 Commands run for this assessment included:
 

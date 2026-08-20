@@ -210,7 +210,10 @@ Use the following breakpoints in order, stopping when the observed path diverges
 
 1. `GlobalExceptionHandler.handleValidationException` to inspect request validation
    failures and field errors, or `handleUnexpectedException` to inspect an unexpected
-   failure retained for server-side diagnostics but omitted from the public body.
+   failure omitted from the public body. The application-owned operational event is
+   limited to its category, `X-Request-Id` correlation value, HTTP context, status,
+   and exception type; inspect exception messages and causes only in a controlled
+   debugger rather than adding them to operational logs.
 2. `AllocationController.allocate` to confirm a valid `gameCode` and
    `AllocationRequest` reached the controller.
 3. `AllocationService.allocate` at the idempotency lookup to distinguish replay from
@@ -238,6 +241,13 @@ orders the remaining keys by ID.
   - verifies validation failure does not call the service;
   - verifies a representative unexpected service exception returns the safe generic
     `500` body without its internal message, cause detail, or exception class names.
+- `OperationalLoggingTests`
+  - verifies the request identifier on responses, request-to-request uniqueness, and
+    MDC cleanup;
+  - verifies a representative unexpected allocation failure emits a correlatable
+    bounded application event without its test-only message or cause marker;
+  - verifies a successful allocation does not add its secret game-key code to
+    application-owned logs.
 - `AllocationServiceTests`
   - covers a successful new allocation and the page size of one;
   - covers returning the original allocation for an existing idempotency key;
