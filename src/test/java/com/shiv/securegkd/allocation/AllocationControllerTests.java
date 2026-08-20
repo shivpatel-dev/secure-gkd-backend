@@ -16,6 +16,7 @@ import java.time.Instant;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -61,6 +62,40 @@ class AllocationControllerTests {
                 .andExpect(jsonPath("$.gameCode").value("GTA5"))
                 .andExpect(jsonPath("$.keyCode").value("GTA5-KEY-001"))
                 .andExpect(jsonPath("$.allocatedAt").value("2026-01-02T03:04:05Z"));
+    }
+
+    @Test
+    void idempotencyKeyAtPersistedBoundaryIsAcceptedWithoutTransformation() throws Exception {
+        String idempotencyKey = "K".repeat(255);
+        AllocationRequest request = new AllocationRequest(idempotencyKey);
+        AllocationResponse response = new AllocationResponse("GTA5", "GTA5-KEY-001", ALLOCATED_AT);
+        when(allocationService.allocate("GTA5", request)).thenReturn(response);
+
+        mockMvc.perform(post("/api/games/GTA5/allocations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated());
+
+        verify(allocationService).allocate("GTA5", new AllocationRequest(idempotencyKey));
+    }
+
+    @Test
+    void idempotencyKeyOverPersistedBoundaryReturnsStructuredBadRequest() throws Exception {
+        mockMvc.perform(post("/api/games/GTA5/allocations")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new AllocationRequest("K".repeat(256))
+                        )))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.timestamp", notNullValue()))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.error").value("Bad Request"))
+                .andExpect(jsonPath("$.message").value("Validation failed"))
+                .andExpect(jsonPath("$.path").value("/api/games/GTA5/allocations"))
+                .andExpect(jsonPath("$.fieldErrors.idempotencyKey")
+                        .value("idempotencyKey must be at most 255 characters"));
+
+        verifyNoInteractions(allocationService);
     }
 
     @Test

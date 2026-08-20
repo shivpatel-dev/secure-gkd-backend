@@ -38,4 +38,7 @@ Common configuration keeps PostgreSQL as the datasource, disables open-in-view,
 sets Hibernate schema handling to `validate`, and enables Flyway validation without
 automatic baselining. Flyway remains the schema owner in every PostgreSQL-backed
 profile; see [Database migrations](DATABASE_MIGRATIONS.md) for migration and schema
-adoption rules.
+adoption rules. The application-level 16 KiB JSON request-body boundary applies
+uniformly to every profile and is intentionally a single fixed API boundary rather
+than a profile-specific deployment setting; see [API notes](API_NOTES.md) for the
+covered operations, `413` response, and deferred abuse-control decisions.

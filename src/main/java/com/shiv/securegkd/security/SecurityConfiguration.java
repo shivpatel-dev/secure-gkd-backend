@@ -2,6 +2,7 @@ package com.shiv.securegkd.security;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shiv.securegkd.ApiError;
+import com.shiv.securegkd.JsonRequestBodySizeFilter;
 import com.shiv.securegkd.RequestCorrelationFilter;
 import com.shiv.securegkd.authentication.AuthenticationIdentityRepository;
 import com.shiv.securegkd.authentication.AuthenticationRole;
@@ -47,6 +48,7 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(JwtProperties.class)
@@ -116,6 +118,10 @@ public class SecurityConfiguration {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler)
                         .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter))
+                )
+                .addFilterAfter(
+                        new JsonRequestBodySizeFilter(objectMapper),
+                        AuthorizationFilter.class
                 );
 
         return http.build();
