@@ -1,5 +1,8 @@
 # Secure GKD Backend
 
+The implemented security model, hardening boundaries, and current limitations are
+consolidated in [`docs/SECURITY.md`](docs/SECURITY.md).
+
 Environment responsibilities, profile activation, and required datasource variables
 are documented in
 [`docs/CONFIGURATION_PROFILES.md`](docs/CONFIGURATION_PROFILES.md).
