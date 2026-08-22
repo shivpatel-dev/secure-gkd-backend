@@ -1,5 +1,8 @@
 # Secure GKD Backend
 
+Local containerized and direct host startup choices are documented in
+[`docs/APPLICATION_STARTUP.md`](docs/APPLICATION_STARTUP.md).
+
 The implemented security model, hardening boundaries, and current limitations are
 consolidated in [`docs/SECURITY.md`](docs/SECURITY.md).
 
