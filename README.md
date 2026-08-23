@@ -16,5 +16,8 @@ Database schema ownership and local adoption rules are documented in
 Docker Compose setup for the application and PostgreSQL is documented in
 [`docs/CONTAINERIZED_LOCAL_ENVIRONMENT.md`](docs/CONTAINERIZED_LOCAL_ENVIRONMENT.md).
 
+The provider-neutral deployment contract is documented in
+[`docs/DEPLOYMENT_RUNTIME.md`](docs/DEPLOYMENT_RUNTIME.md).
+
 Credential authentication and Bearer-token usage are documented in
 [`docs/API_NOTES.md`](docs/API_NOTES.md).
