@@ -19,5 +19,8 @@ Docker Compose setup for the application and PostgreSQL is documented in
 The provider-neutral deployment contract is documented in
 [`docs/DEPLOYMENT_RUNTIME.md`](docs/DEPLOYMENT_RUNTIME.md).
 
+Observed Render deployment evidence is recorded in
+[`docs/DEPLOYMENT_VERIFICATION.md`](docs/DEPLOYMENT_VERIFICATION.md).
+
 Credential authentication and Bearer-token usage are documented in
 [`docs/API_NOTES.md`](docs/API_NOTES.md).
