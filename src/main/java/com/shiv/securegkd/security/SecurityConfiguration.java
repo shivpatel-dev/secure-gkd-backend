@@ -95,6 +95,10 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.GET, "/api/health").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/auth/token").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/v3/api-docs").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/v3/api-docs/swagger-config").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/swagger-ui.html").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/swagger-ui/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/games").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.GET, "/api/games/{code}")
                         .hasAnyRole("USER", "ADMIN")

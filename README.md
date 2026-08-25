@@ -27,3 +27,7 @@ The operator procedure for Render deployment and application rollback is in
 
 Credential authentication and Bearer-token usage are documented in
 [`docs/API_NOTES.md`](docs/API_NOTES.md).
+
+With the application running, generated OpenAPI JSON is available at
+`/v3/api-docs` and Swagger UI at `/swagger-ui.html`. Copyable requests and exercise
+prerequisites are in [`docs/API_EXAMPLES.md`](docs/API_EXAMPLES.md).
