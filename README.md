@@ -22,5 +22,8 @@ The provider-neutral deployment contract is documented in
 Observed Render deployment evidence is recorded in
 [`docs/DEPLOYMENT_VERIFICATION.md`](docs/DEPLOYMENT_VERIFICATION.md).
 
+The operator procedure for Render deployment and application rollback is in
+[`docs/DEPLOYMENT_RUNBOOK.md`](docs/DEPLOYMENT_RUNBOOK.md).
+
 Credential authentication and Bearer-token usage are documented in
 [`docs/API_NOTES.md`](docs/API_NOTES.md).
