@@ -1,5 +1,8 @@
 # Secure GKD Backend
 
+The current single-service design and runtime flows are summarized in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
 Local containerized and direct host startup choices are documented in
 [`docs/APPLICATION_STARTUP.md`](docs/APPLICATION_STARTUP.md).
 
