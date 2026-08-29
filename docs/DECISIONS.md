@@ -1,8 +1,9 @@
 # Architecture decisions
 
 This document records the major engineering decisions behind the current
-single-service backend. It explains why the implemented boundaries matter and what
-they do not provide. For the system structure and request flows, start with
+single-service backend and clearly identified target architecture. It explains why
+the boundaries matter, what they do not provide, and whether a decision is already
+implemented. For the current system structure and request flows, start with
 [Architecture](ARCHITECTURE.md).
 
 ## 1. Keep allocation synchronous and transactional
@@ -179,3 +180,129 @@ continuously running Render deployment exists.
 
 See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 [Render deployment verification](DEPLOYMENT_VERIFICATION.md).
+
+## 7. Add one asynchronous boundary for allocation audit processing
+
+### Status and current-state evidence
+
+**Accepted target architecture; not implemented.** Secure GKD currently runs as one
+synchronous Spring Boot service backed by PostgreSQL. The repository has no Kafka
+dependency or configuration, transactional-outbox table or publisher,
+`AllocationCreated` event implementation, allocation-audit consumer/service, or
+audit-service persistence. The architecture below defines the boundary for later
+work; it does not describe a capability that exists today.
+
+The current allocation behavior remains authoritative. `AllocationService.allocate`
+owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation
+and IdempotencyRecord persistence, constraint enforcement, and response construction.
+The allocated game key continues to be returned synchronously. Kafka and downstream
+audit availability do not participate in that implemented path.
+
+### Context and decision
+
+Allocation audit is a justified asynchronous responsibility because it records an
+independent downstream account of an allocation after the allocation service has
+decided and committed the authoritative result. Audit processing can have a separate
+availability, failure, recovery, retention, and deployment lifecycle without owning
+key selection, idempotency, or allocation correctness. Making that work synchronous
+would add audit or transport availability to the caller's critical path even though
+an audit-processing delay should not prevent a valid allocation.
+
+The target design therefore adds exactly one independently deployable
+allocation-audit consumer/service. Ownership remains deliberately coarse:
+
+| Owner | Responsibility and persistence boundary |
+| --- | --- |
+| Existing Secure GKD backend, acting as the allocation service | Owns Game, GameKey, Allocation, and IdempotencyRecord behavior and tables. It remains the sole authority for allocation success, synchronous responses, replay behavior, and the PostgreSQL constraints that protect allocation invariants. A later outbox table also belongs exclusively to this service. |
+| Allocation-audit service | Consumes committed-allocation events and owns the audit records it derives. It does not select keys, change allocations, decide idempotency outcomes, or participate in allocation correctness. |
+
+The services do not share application-owned persistence tables and must not use
+direct database access as their integration contract. The allocation service does
+not write the audit service's tables, and the audit service does not read or write
+the allocation service's Game, GameKey, Allocation, IdempotencyRecord, or future
+outbox tables.
+
+Kafka is the intended asynchronous transport. A versioned `AllocationCreated` event
+will state that an allocation committed successfully so the audit service can process
+that fact independently. The event does not transfer ownership of allocation
+behavior or become a command that determines whether allocation succeeds. Secret
+game-key values must never cross this event boundary. The complete event fields,
+versioning mechanics, and compatibility rules belong to later event-contract work.
+
+### Transaction and communication boundaries
+
+The target flow preserves one authoritative synchronous transaction while keeping networked publication and downstream processing outside it:
+
+1. The allocation service performs the existing allocation workflow in its
+   PostgreSQL transaction. That transaction alone decides whether the allocation
+   succeeds, and its database constraints remain the final correctness boundary.
+2. Later outbox work will persist the successful Allocation, IdempotencyRecord, and
+   intent to publish `AllocationCreated` atomically in that same local transaction.
+   If the transaction rolls back, neither the allocation state nor its publish intent
+   is committed. An idempotency replay returns the original Allocation rather than
+   creating another one, so it does not represent another `AllocationCreated` fact.
+3. The caller receives the allocated key synchronously from the allocation service,
+   consistent with the service's committed database state. Kafka or audit-service
+   availability must not determine whether an otherwise valid allocation succeeds.
+4. A separate outbox publisher publishes committed intents to Kafka outside the
+   synchronous allocation transaction.
+5. The allocation-audit service consumes and persists audit results in its own
+   transaction, also outside the synchronous allocation transaction.
+
+Once an allocation commits, publisher, Kafka, delivery, consumer, or audit-persistence
+failures must not invalidate it. Recovery retries downstream work instead of
+reversing the authoritative allocation.
+
+### Consistency, delivery, and failure assumptions
+
+The synchronous allocation response is consistent with the allocation service's
+committed PostgreSQL state. Audit state is eventually consistent and may lag while
+publication or processing recovers. The design assumes publication or delivery can
+occur more than once; later consumer work must therefore make processing idempotent.
+This is not an exactly-once end-to-end delivery claim.
+
+Expected failure conditions include:
+
+| Condition | Architectural consequence |
+| --- | --- |
+| Kafka is temporarily unavailable after allocation commits | The committed outbox intent remains available for a later publication attempt; the allocation remains valid. |
+| The outbox publisher fails or restarts | It resumes from committed outbox state. An uncertain attempt can lead to duplicate publication. |
+| An event is published or delivered more than once | The audit consumer must tolerate duplicates through later idempotent-processing design. |
+| The audit consumer is unavailable | Audit state falls behind the allocation service's authoritative state until consumption can resume; the allocation remains valid. |
+| Audit processing or audit persistence fails | The audit work can be retried according to later operational design; it does not roll back or invalidate the allocation. |
+
+Retry timing, backoff, poison-message handling, and dead-letter policy are deliberately
+deferred rather than implied by this decision.
+
+### Why use a transactional outbox
+
+Writing allocation state to PostgreSQL and publishing to Kafka as independent
+operations is an unsafe dual write. If PostgreSQL commits and the Kafka publish fails,
+the allocation exists without its audit event. If Kafka accepts the event before the
+database transaction later fails or rolls back, downstream processing can observe an
+allocation that never committed. Reversing the operation order does not remove both
+failure windows.
+
+The selected reliability boundary is therefore a transactional outbox owned by the
+allocation service. The later implementation will commit the allocation state and
+publish intent atomically in one PostgreSQL transaction, then let an independent
+publisher deliver committed intents to Kafka. This avoids losing the intent across
+the database/Kafka boundary while keeping Kafka outside the allocation transaction.
+It still permits duplicate publication and delivery, so it requires idempotent
+downstream processing and does not provide exactly-once end-to-end delivery.
+
+### Rejected alternatives and tradeoffs
+
+| Alternative | Reason rejected |
+| --- | --- |
+| Split Game, GameKey, Allocation, or IdempotencyRecord into separate services | These records participate in one cohesive allocation workflow and PostgreSQL-backed invariant set. Splitting them would distribute the core correctness transaction without an independent business or operational boundary. |
+| Make audit processing a synchronous allocation dependency | Audit latency or unavailability would delay or reject an otherwise valid allocation even though audit processing does not decide allocation correctness. |
+| Write PostgreSQL state and publish directly to Kafka as independent operations | This creates the dual-write failure windows addressed by the transactional outbox. |
+| Share one application-owned database or application-owned tables between allocation and audit services | Shared persistence would bypass the event contract, couple deployments and schema evolution, and blur ownership. Each service owns and accesses only its persistence. |
+| Add more services merely to increase the microservice count | Additional network and operational boundaries would add failure modes without isolating another justified responsibility. The single audit boundary is the smallest distributed extension that provides independent audit processing. |
+
+The tradeoff is accepting Kafka and another deployable service, eventual audit
+consistency, duplicate-delivery handling, and additional operations. That cost is
+justified only because audit processing can evolve and recover independently while
+the allocation service remains authoritative and synchronous; it is not a general
+decision to decompose the existing domain into microservices.
