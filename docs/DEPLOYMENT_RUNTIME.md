@@ -4,6 +4,11 @@ This document defines the provider-neutral runtime contract for deploying the
 existing application container. It does not select a hosting provider or define
 provider-specific infrastructure.
 
+The repository's single-node Kafka service and topic initialization belong only to
+the Docker Compose local-development environment. They do not add Kafka to this
+application-container contract, provision external Kafka, or change the production
+deployment architecture described here.
+
 ## Deployment artifact and Java runtime
 
 The repository `Dockerfile` is the single deployment build. Its Java 17 build stage
