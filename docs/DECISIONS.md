@@ -185,18 +185,26 @@ See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 
 ### Status and current-state evidence
 
-**Accepted target architecture; not implemented.** Secure GKD currently runs as one
-synchronous Spring Boot service backed by PostgreSQL. The repository has no Kafka
-dependency or configuration, transactional-outbox table or publisher,
-`AllocationCreated` event implementation, allocation-audit consumer/service, or
-audit-service persistence. The architecture below defines the boundary for later
-work; it does not describe a capability that exists today.
+**Accepted target architecture; application behavior not implemented.** Secure GKD
+currently runs as one synchronous Spring Boot service backed by PostgreSQL. Docker
+Compose now provides one local-development Kafka broker and a provisioned
+`secure-gkd.allocation-created` topic as transport infrastructure. The application
+still has no Kafka client dependency or configuration, transactional-outbox table or
+publisher, `AllocationCreated` event implementation, allocation-audit
+consumer/service, or audit-service persistence. The architecture below defines the
+application and service boundary for later work; it does not describe implemented
+event publication or audit behavior.
 
 The current allocation behavior remains authoritative. `AllocationService.allocate`
 owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation
 and IdempotencyRecord persistence, constraint enforcement, and response construction.
 The allocated game key continues to be returned synchronously. Kafka and downstream
 audit availability do not participate in that implemented path.
+
+The local Compose broker is a single combined broker/controller in KRaft mode with
+one-partition, replication-factor-one topic settings. Its plaintext listeners and
+single-node durability are intentionally local-development choices, not a production
+Kafka deployment or a decision about the later event schema and compatibility model.
 
 ### Context and decision
 

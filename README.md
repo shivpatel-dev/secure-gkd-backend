@@ -6,8 +6,10 @@ service backed by PostgreSQL. The service can authenticate pre-existing identiti
 create and retrieve Games, and allocate an available GameKey with persisted
 idempotency.
 
-The allocation response is authoritative and synchronous. This repository does not
-currently contain Kafka, a transactional outbox, a second service, or an asynchronous
+The allocation response is authoritative and synchronous. Docker Compose provides a
+single local Kafka broker and a provisioned topic for future allocation events, but
+the application has no Kafka client, event serialization/schema/compatibility
+contract, transactional outbox, producer, consumer, audit service, or asynchronous
 allocation path.
 
 ## Current capabilities
@@ -52,6 +54,7 @@ flows and [Architecture decisions](docs/DECISIONS.md) for their rationale and li
 - Spring Data JPA, Hibernate, and HikariCP
 - PostgreSQL (version 16 is the Compose, CI, and controlled deployment-verification
   baseline)
+- Apache Kafka 4.3.1 in single-node KRaft mode for local infrastructure only
 - Flyway database migrations
 - springdoc OpenAPI and Swagger UI
 - Maven Wrapper, Docker, and Docker Compose
@@ -59,8 +62,8 @@ flows and [Architecture decisions](docs/DECISIONS.md) for their rationale and li
 ## Quick start with Docker Compose
 
 Docker with Compose support is the recommended self-contained local path; it builds
-the application and starts it with PostgreSQL 16. Host Java, Maven, and PostgreSQL
-installations are not required.
+the application and starts it with PostgreSQL 16 and a single local Kafka broker.
+Host Java, Maven, PostgreSQL, and Kafka installations are not required.
 
 1. Copy the environment template to the untracked `.env` file:
 
@@ -81,7 +84,7 @@ installations are not required.
    guidance is in [Containerized local environment](docs/CONTAINERIZED_LOCAL_ENVIRONMENT.md).
 
 3. Validate the Compose model without printing interpolated secrets, then build and
-   start both services:
+   start the environment:
 
    ```sh
    docker compose config --quiet
@@ -92,17 +95,22 @@ installations are not required.
 4. Check service state and the public application health endpoint:
 
    ```sh
-   docker compose ps
+   docker compose ps --all
    curl http://localhost:8080/api/health
    ```
 
    A ready application returns HTTP `200` with a JSON body containing
    `"status":"UP"`. This endpoint reports application HTTP health; it does not
-   independently query PostgreSQL.
+   independently query PostgreSQL or Kafka. The `kafka` service should report
+   healthy, and the one-shot `kafka-topic-init` service should exit successfully
+   after ensuring that `secure-gkd.allocation-created` exists.
 
-The container guide covers detailed secret generation, logs, data retention, and the
-destructive local volume-reset option. For host execution with Java 17, the Maven
-Wrapper, and an independently running PostgreSQL database, use
+Compose-network Kafka clients use `kafka:9092`; host-side development tools use
+`localhost:29092`, which is published only on the IPv4 loopback interface. Both
+listeners are plaintext and intentionally local-only. The container guide covers
+readiness and topic checks, connectivity diagnostics, logs, data retention, and
+destructive local reset options. For host execution with Java 17, the Maven Wrapper,
+and an independently running PostgreSQL database, use
 [Application startup](docs/APPLICATION_STARTUP.md).
 
 ## Configuration and secrets
@@ -236,11 +244,12 @@ continuously running public deployment. See
 
 ## Planned future direction
 
-A later distributed-system phase may publish a versioned allocation event using
-transactional-outbox reasoning, deliver it asynchronously through Kafka, and add one
-independent consumer with idempotent event processing. These are planned concepts,
-not implemented capabilities. The present correctness boundary remains the
-synchronous `AllocationService.allocate` transaction and its PostgreSQL constraints.
+A later distributed-system phase may define and publish a versioned allocation event
+using transactional-outbox reasoning and add one independent consumer with
+idempotent event processing. The local broker and provisioned topic are implemented
+infrastructure; the event contract, outbox, producer, consumer, and audit behavior
+remain planned concepts. The present correctness boundary remains the synchronous
+`AllocationService.allocate` transaction and its PostgreSQL constraints.
 The accepted boundary, transaction model, delivery assumptions, and rejected
 alternatives are recorded in
 [Architecture decision 7](docs/DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).
