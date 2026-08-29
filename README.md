@@ -241,6 +241,9 @@ transactional-outbox reasoning, deliver it asynchronously through Kafka, and add
 independent consumer with idempotent event processing. These are planned concepts,
 not implemented capabilities. The present correctness boundary remains the
 synchronous `AllocationService.allocate` transaction and its PostgreSQL constraints.
+The accepted boundary, transaction model, delivery assumptions, and rejected
+alternatives are recorded in
+[Architecture decision 7](docs/DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).
 
 ## Documentation map
 
