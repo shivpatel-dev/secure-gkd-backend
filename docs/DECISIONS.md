@@ -185,15 +185,16 @@ See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 
 ### Status and current-state evidence
 
-**Accepted target architecture; application behavior not implemented.** Secure GKD
-currently runs as one synchronous Spring Boot service backed by PostgreSQL. Docker
-Compose now provides one local-development Kafka broker and a provisioned
-`secure-gkd.allocation-created` topic as transport infrastructure. The application
-still has no Kafka client dependency or configuration, transactional-outbox table or
-publisher, `AllocationCreated` event implementation, allocation-audit
-consumer/service, or audit-service persistence. The architecture below defines the
-application and service boundary for later work; it does not describe implemented
-event publication or audit behavior.
+**Accepted target architecture; event contract defined; publication and audit
+behavior not implemented.** Secure GKD currently runs as one synchronous Spring Boot
+service backed by PostgreSQL. Docker Compose provides one local-development Kafka
+broker and a provisioned `secure-gkd.allocation-created` topic as transport
+infrastructure. The allocation service now owns the version-1 `AllocationCreated`
+JSON contract, but the application still has no Kafka client dependency or
+configuration, transactional-outbox table or publisher, event creation or
+publication, allocation-audit consumer/service, or audit-service persistence. The
+architecture below defines the application and service boundary for later work; it
+does not describe implemented event publication or audit behavior.
 
 The current allocation behavior remains authoritative. `AllocationService.allocate`
 owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation
@@ -204,7 +205,7 @@ audit availability do not participate in that implemented path.
 The local Compose broker is a single combined broker/controller in KRaft mode with
 one-partition, replication-factor-one topic settings. Its plaintext listeners and
 single-node durability are intentionally local-development choices, not a production
-Kafka deployment or a decision about the later event schema and compatibility model.
+Kafka deployment.
 
 ### Context and decision
 
@@ -230,12 +231,14 @@ not write the audit service's tables, and the audit service does not read or wri
 the allocation service's Game, GameKey, Allocation, IdempotencyRecord, or future
 outbox tables.
 
-Kafka is the intended asynchronous transport. A versioned `AllocationCreated` event
-will state that an allocation committed successfully so the audit service can process
-that fact independently. The event does not transfer ownership of allocation
-behavior or become a command that determines whether allocation succeeds. Secret
-game-key values must never cross this event boundary. The complete event fields,
-versioning mechanics, and compatibility rules belong to later event-contract work.
+Kafka is the intended asynchronous transport. The versioned `AllocationCreated`
+contract states the fact represented by one successfully created Allocation so the
+audit service can later process that fact independently. The event does not transfer
+ownership of allocation behavior or become a command that determines whether
+allocation succeeds. Secret game-key values must never cross this event boundary.
+The complete event fields, versioning and compatibility rules, identity semantics,
+and current-versus-future boundary are defined in the
+[AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
 
 ### Transaction and communication boundaries
 
