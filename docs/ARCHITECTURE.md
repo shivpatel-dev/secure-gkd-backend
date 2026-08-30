@@ -108,6 +108,20 @@ database uniqueness constraint is the final duplicate-allocation protection. See
 and [allocation concurrency evidence](ALLOCATION_CONCURRENCY.md) for the controlled
 observation and its limits.
 
+## Allocation event contract
+
+The allocation service now owns a version-1 `AllocationCreated` JSON contract. It
+defines event and allocation identities, event-intent and authoritative allocation
+timestamps, Game identity and non-secret code, and server-generated request
+correlation without exposing the allocated GameKey. The contract is separate from
+HTTP response DTOs, JPA entities, Kafka APIs, and future outbox persistence types.
+
+This is a contract boundary only. `AllocationService.allocate` does not create,
+persist, or publish the event, and idempotent replay remains only a synchronous return
+of the original Allocation. The exact fields, semantics, compatibility rules,
+ownership, secret exclusions, and future-work boundary are in the
+[AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
+
 ## Authentication and authorization
 
 `POST /api/auth/token` is public. It submits credentials to Spring Security's
@@ -151,6 +165,7 @@ deployment exists: those temporary resources were removed after verification.
 
 - [Allocation runtime and debugging](ALLOCATION_RUNTIME_DEBUGGING.md)
 - [Allocation concurrency evidence](ALLOCATION_CONCURRENCY.md)
+- [AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md)
 - [Security and hardening overview](SECURITY.md)
 - [Database migrations](DATABASE_MIGRATIONS.md)
 - [Configuration profiles](CONFIGURATION_PROFILES.md)

@@ -8,9 +8,10 @@ idempotency.
 
 The allocation response is authoritative and synchronous. Docker Compose provides a
 single local Kafka broker and a provisioned topic for future allocation events, but
-the application has no Kafka client, event serialization/schema/compatibility
-contract, transactional outbox, producer, consumer, audit service, or asynchronous
-allocation path.
+the application has no Kafka client, transactional outbox, producer, consumer, audit
+service, or asynchronous allocation path. The application-owned, version-1
+`AllocationCreated` JSON contract is defined, but the allocation flow does not yet
+create, persist, or publish `AllocationCreated` events.
 
 ## Current capabilities
 
@@ -21,6 +22,8 @@ allocation path.
 - USER-or-ADMIN allocation of an already-provisioned GameKey.
 - Exact-key idempotency: replaying an idempotency key returns its original allocation
   instead of consuming another GameKey.
+- An application-owned, version-1 `AllocationCreated` JSON contract that excludes
+  secret GameKey data; event creation and publication remain future work.
 - Flyway-owned PostgreSQL migrations with Hibernate schema validation.
 - Bean Validation-backed request validation and structured public API error handling.
 - Per-request `X-Request-Id` correlation and bounded application-owned
@@ -244,12 +247,15 @@ continuously running public deployment. See
 
 ## Planned future direction
 
-A later distributed-system phase may define and publish a versioned allocation event
+A later distributed-system phase may publish the defined versioned allocation event
 using transactional-outbox reasoning and add one independent consumer with
 idempotent event processing. The local broker and provisioned topic are implemented
-infrastructure; the event contract, outbox, producer, consumer, and audit behavior
-remain planned concepts. The present correctness boundary remains the synchronous
-`AllocationService.allocate` transaction and its PostgreSQL constraints.
+infrastructure, and the version-1 JSON contract is defined; the outbox, event
+creation, producer, consumer, and audit behavior remain planned concepts. The present
+correctness boundary remains the synchronous `AllocationService.allocate`
+transaction and its PostgreSQL constraints. See the
+[AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) for its fields,
+semantics, compatibility rules, ownership, and sensitive-data boundary.
 The accepted boundary, transaction model, delivery assumptions, and rejected
 alternatives are recorded in
 [Architecture decision 7](docs/DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).
@@ -258,7 +264,7 @@ alternatives are recorded in
 
 | Area | Documents |
 | --- | --- |
-| System design | [Architecture](docs/ARCHITECTURE.md) · [Architecture decisions](docs/DECISIONS.md) |
+| System design | [Architecture](docs/ARCHITECTURE.md) · [Architecture decisions](docs/DECISIONS.md) · [AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) |
 | Local startup | [Application startup](docs/APPLICATION_STARTUP.md) · [Containerized environment](docs/CONTAINERIZED_LOCAL_ENVIRONMENT.md) |
 | Configuration and data | [Configuration profiles](docs/CONFIGURATION_PROFILES.md) · [Database migrations](docs/DATABASE_MIGRATIONS.md) |
 | API and security | [API notes](docs/API_NOTES.md) · [Practical API examples](docs/API_EXAMPLES.md) · [Security](docs/SECURITY.md) |
