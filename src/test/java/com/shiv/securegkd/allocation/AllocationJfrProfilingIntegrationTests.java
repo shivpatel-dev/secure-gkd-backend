@@ -7,6 +7,7 @@ import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
 import com.shiv.securegkd.gamekey.GameKeyRepository;
 import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import jdk.jfr.Configuration;
 import jdk.jfr.EventType;
 import jdk.jfr.FlightRecorder;
@@ -174,6 +175,9 @@ class AllocationJfrProfilingIntegrationTests {
 
     @Autowired
     private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
+    private AllocationOutboxRepository allocationOutboxRepository;
 
     @BeforeEach
     void setUp() {
@@ -601,6 +605,7 @@ class AllocationJfrProfilingIntegrationTests {
     }
 
     private void deleteTestData() {
+        allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();

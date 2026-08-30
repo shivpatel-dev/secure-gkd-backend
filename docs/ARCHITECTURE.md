@@ -61,12 +61,14 @@ The service owns application behavior for the following PostgreSQL-backed record
 | GameKeys | Each GameKey belongs to one Game. The allocation workflow selects the first available key by ID; PostgreSQL requires key codes to be unique. There is currently no public GameKey-provisioning endpoint. |
 | Allocations | Each Allocation references exactly one GameKey and records its allocation time. A unique database constraint permits at most one Allocation per GameKey. |
 | IdempotencyRecords | Each record maps one exact idempotency key to one Allocation. Separate unique constraints enforce one record per key and one record per Allocation. |
+| Allocation outbox intents | Each row stores one serialized version-1 `AllocationCreated` intent for one Allocation. Its event UUID is the primary key, its Allocation reference is unique, and `published_at` remains null until later publication work exists. |
 | Authentication identities | Credential authentication reads a unique username, encoded password hash, and required role from the database. Identity provisioning and account management are external responsibilities because this service has no identity-management API. |
 | Roles | Each authentication identity has exactly one supported role, `USER` or `ADMIN`. The Java enum and PostgreSQL check constraint define the same allowed values; roles are not a separate persistence resource. |
 
-Foreign keys preserve the GameKey-to-Game, Allocation-to-GameKey, and
-IdempotencyRecord-to-Allocation relationships. The complete schema and adoption rules
-are in [Database migrations](DATABASE_MIGRATIONS.md).
+Foreign keys preserve the GameKey-to-Game, Allocation-to-GameKey,
+IdempotencyRecord-to-Allocation, and allocation-outbox-to-Allocation relationships.
+The complete schema and adoption rules are in
+[Database migrations](DATABASE_MIGRATIONS.md).
 
 ## Allocation request and transaction flow
 
@@ -87,15 +89,19 @@ are in [Database migrations](DATABASE_MIGRATIONS.md).
 5. `AllocationRepository.saveAndFlush` sends the Allocation insert to PostgreSQL
    while the transaction is still active. This lets the service translate an
    immediate uniqueness failure, but the flush is **not** an independent commit.
-6. The service saves the IdempotencyRecord, builds the response, and returns. Spring
-   commits only after the transactional method completes successfully. An unchecked
-   failure leaving the method rolls the transaction back.
+6. The service saves the IdempotencyRecord, creates one `AllocationCreated` using the
+   persisted Allocation and Game identities plus the request's established server
+   correlation ID, serializes that contract to JSON, and saves its outbox intent.
+7. The service builds the response and returns. Spring commits only after the
+   transactional method completes successfully. An unchecked serialization or
+   persistence failure leaving the method rolls the transaction back.
 
 PostgreSQL-backed rollback evidence forced the idempotency save to fail after the
 Allocation had been flushed. The resulting database state retained neither the
 Allocation nor the IdempotencyRecord, and the original GameKey remained available.
 This verifies the atomic result for that controlled failure; it does not mean a flush
-commits separately.
+commits separately. Separate PostgreSQL-backed evidence forced outbox persistence to
+fail and retained none of the new Allocation, IdempotencyRecord, or outbox intent.
 
 Availability selection can race. A controlled two-transaction test made both callers
 select the same single key before either inserted it. One transaction completed; the
@@ -108,18 +114,20 @@ database uniqueness constraint is the final duplicate-allocation protection. See
 and [allocation concurrency evidence](ALLOCATION_CONCURRENCY.md) for the controlled
 observation and its limits.
 
-## Allocation event contract
+## Allocation event contract and outbox persistence
 
 The allocation service now owns a version-1 `AllocationCreated` JSON contract. It
 defines event and allocation identities, event-intent and authoritative allocation
 timestamps, Game identity and non-secret code, and server-generated request
 correlation without exposing the allocated GameKey. The contract is separate from
-HTTP response DTOs, JPA entities, Kafka APIs, and future outbox persistence types.
+HTTP response DTOs, JPA entities, Kafka APIs, and the outbox persistence type.
 
-This is a contract boundary only. `AllocationService.allocate` does not create,
-persist, or publish the event, and idempotent replay remains only a synchronous return
-of the original Allocation. The exact fields, semantics, compatibility rules,
-ownership, secret exclusions, and future-work boundary are in the
+For a new Allocation, `AllocationService.allocate` persists the Allocation,
+IdempotencyRecord, and one serialized event intent atomically. Idempotent replay
+returns the original Allocation without creating another intent. Kafka publication
+is not implemented, Kafka availability is not consulted, and there is no audit
+consumer or audit persistence. The exact fields, semantics, compatibility rules,
+retention boundary, ownership, secret exclusions, and future-work boundary are in the
 [AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
 
 ## Authentication and authorization

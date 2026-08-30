@@ -14,7 +14,8 @@ Allocating a GameKey changes related PostgreSQL state and must return the alloca
 key in the HTTP response. `AllocationService.allocate` therefore owns one synchronous
 Spring-managed `@Transactional` boundary. For a new allocation, the Game lookup,
 available-GameKey lookup, Allocation persistence, IdempotencyRecord persistence, and
-response construction all participate in that transaction.
+`AllocationCreated` outbox-intent persistence all participate in that transaction,
+along with response construction.
 
 `AllocationRepository.saveAndFlush` sends the Allocation insert to PostgreSQL while
 the transaction remains active. The flush makes an immediate constraint failure
@@ -24,11 +25,13 @@ when an unchecked failure leaves it.
 
 ### Consequences and limits
 
-The Allocation and IdempotencyRecord succeed or fail as one service-owned unit. In a
+The Allocation, IdempotencyRecord, and outbox intent succeed or fail as one
+service-owned unit. In a
 PostgreSQL-backed transaction test, a forced IdempotencyRecord persistence failure
 after the Allocation flush left neither row stored and made the GameKey available
-again. This is evidence for that controlled rollback path, not a claim that flushing
-commits separately.
+again. A separate forced outbox-persistence failure left none of the three new rows
+stored. This is evidence for those controlled rollback paths, not a claim that
+flushing commits separately.
 
 Allocation is not split across services, asynchronous, or distributed. The caller
 waits for PostgreSQL work and receives the result from the same request path.
@@ -185,20 +188,21 @@ See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 
 ### Status and current-state evidence
 
-**Accepted target architecture; event contract defined; publication and audit
-behavior not implemented.** Secure GKD currently runs as one synchronous Spring Boot
-service backed by PostgreSQL. Docker Compose provides one local-development Kafka
-broker and a provisioned `secure-gkd.allocation-created` topic as transport
-infrastructure. The allocation service now owns the version-1 `AllocationCreated`
-JSON contract, but the application still has no Kafka client dependency or
-configuration, transactional-outbox table or publisher, event creation or
-publication, allocation-audit consumer/service, or audit-service persistence. The
-architecture below defines the application and service boundary for later work; it
-does not describe implemented event publication or audit behavior.
+**Transactional-outbox persistence implemented; publication and audit behavior not
+implemented.** Secure GKD currently runs as one synchronous Spring Boot service
+backed by PostgreSQL. Docker Compose provides one local-development Kafka broker and
+a provisioned `secure-gkd.allocation-created` topic as transport infrastructure. The
+allocation service owns the version-1 `AllocationCreated` JSON contract and now
+creates and persists one outbox intent for each new Allocation. The application still
+has no Kafka client dependency or configuration, outbox publisher, event publication,
+allocation-audit consumer/service, or audit-service persistence. The architecture
+below distinguishes the implemented local transaction from later publication and
+audit work.
 
 The current allocation behavior remains authoritative. `AllocationService.allocate`
-owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation
-and IdempotencyRecord persistence, constraint enforcement, and response construction.
+owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation,
+IdempotencyRecord, and outbox-intent persistence, constraint enforcement, and response
+construction.
 The allocated game key continues to be returned synchronously. Kafka and downstream
 audit availability do not participate in that implemented path.
 
@@ -222,14 +226,14 @@ allocation-audit consumer/service. Ownership remains deliberately coarse:
 
 | Owner | Responsibility and persistence boundary |
 | --- | --- |
-| Existing Secure GKD backend, acting as the allocation service | Owns Game, GameKey, Allocation, and IdempotencyRecord behavior and tables. It remains the sole authority for allocation success, synchronous responses, replay behavior, and the PostgreSQL constraints that protect allocation invariants. A later outbox table also belongs exclusively to this service. |
+| Existing Secure GKD backend, acting as the allocation service | Owns Game, GameKey, Allocation, IdempotencyRecord, and `allocation_outbox` behavior and tables. It remains the sole authority for allocation success, synchronous responses, replay behavior, and the PostgreSQL constraints that protect allocation invariants. |
 | Allocation-audit service | Consumes committed-allocation events and owns the audit records it derives. It does not select keys, change allocations, decide idempotency outcomes, or participate in allocation correctness. |
 
 The services do not share application-owned persistence tables and must not use
 direct database access as their integration contract. The allocation service does
 not write the audit service's tables, and the audit service does not read or write
-the allocation service's Game, GameKey, Allocation, IdempotencyRecord, or future
-outbox tables.
+the allocation service's Game, GameKey, Allocation, IdempotencyRecord, or outbox
+table.
 
 Kafka is the intended asynchronous transport. The versioned `AllocationCreated`
 contract states the fact represented by one successfully created Allocation so the
@@ -247,11 +251,12 @@ The target flow preserves one authoritative synchronous transaction while keepin
 1. The allocation service performs the existing allocation workflow in its
    PostgreSQL transaction. That transaction alone decides whether the allocation
    succeeds, and its database constraints remain the final correctness boundary.
-2. Later outbox work will persist the successful Allocation, IdempotencyRecord, and
-   intent to publish `AllocationCreated` atomically in that same local transaction.
-   If the transaction rolls back, neither the allocation state nor its publish intent
-   is committed. An idempotency replay returns the original Allocation rather than
-   creating another one, so it does not represent another `AllocationCreated` fact.
+2. The implemented outbox work persists the successful Allocation,
+   IdempotencyRecord, and intent to publish `AllocationCreated` atomically in that same
+   local transaction. If the transaction rolls back, neither the allocation state nor
+   its publish intent is committed. An idempotency replay returns the original
+   Allocation rather than creating another one, so it does not represent another
+   `AllocationCreated` fact.
 3. The caller receives the allocated key synchronously from the allocation service,
    consistent with the service's committed database state. Kafka or audit-service
    availability must not determine whether an otherwise valid allocation succeeds.
@@ -295,12 +300,13 @@ allocation that never committed. Reversing the operation order does not remove b
 failure windows.
 
 The selected reliability boundary is therefore a transactional outbox owned by the
-allocation service. The later implementation will commit the allocation state and
-publish intent atomically in one PostgreSQL transaction, then let an independent
-publisher deliver committed intents to Kafka. This avoids losing the intent across
-the database/Kafka boundary while keeping Kafka outside the allocation transaction.
-It still permits duplicate publication and delivery, so it requires idempotent
-downstream processing and does not provide exactly-once end-to-end delivery.
+allocation service. The current implementation commits the allocation state and
+publish intent atomically in one PostgreSQL transaction. A later independent
+publisher will deliver committed intents to Kafka. This avoids losing the intent
+across the database/Kafka boundary while keeping Kafka outside the allocation
+transaction. It still permits duplicate publication and delivery, so it requires
+idempotent downstream processing and does not provide exactly-once end-to-end
+delivery.
 
 ### Rejected alternatives and tradeoffs
 

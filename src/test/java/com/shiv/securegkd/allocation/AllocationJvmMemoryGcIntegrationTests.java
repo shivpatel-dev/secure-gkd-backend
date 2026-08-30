@@ -7,6 +7,7 @@ import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
 import com.shiv.securegkd.gamekey.GameKeyRepository;
 import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -79,6 +80,9 @@ class AllocationJvmMemoryGcIntegrationTests {
 
     @Autowired
     private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
+    private AllocationOutboxRepository allocationOutboxRepository;
 
     @BeforeEach
     void setUp() {
@@ -282,6 +286,7 @@ class AllocationJvmMemoryGcIntegrationTests {
     }
 
     private void deleteTestData() {
+        allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();

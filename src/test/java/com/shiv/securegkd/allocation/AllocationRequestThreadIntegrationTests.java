@@ -7,6 +7,7 @@ import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
 import com.shiv.securegkd.gamekey.GameKeyRepository;
 import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.servlet.FilterChain;
@@ -109,6 +110,9 @@ class AllocationRequestThreadIntegrationTests {
 
     @Autowired
     private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
+    private AllocationOutboxRepository allocationOutboxRepository;
 
     @MockitoSpyBean
     private AllocationController allocationController;
@@ -427,6 +431,7 @@ class AllocationRequestThreadIntegrationTests {
     }
 
     private void deleteTestData() {
+        allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();

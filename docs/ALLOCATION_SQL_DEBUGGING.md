@@ -73,6 +73,7 @@ operations in order:
 3. Select the first key for that game that has no allocation.
 4. Insert the allocation and flush it.
 5. Save the idempotency record.
+6. Insert the serialized `AllocationCreated` intent into `allocation_outbox`.
 
 No successful new-allocation request ran during the historical SQL inspection, so
 there is no observed endpoint statement count for this path. Later successful
@@ -116,6 +117,13 @@ insert into idempotency_records
 values (?, ?, ?, ...)
 ```
 
+```sql
+insert into allocation_outbox
+    (allocation_id, event_type, occurred_at, payload, published_at,
+     schema_version, event_id)
+values (?, 'AllocationCreated', ?, ?, null, 1, ?)
+```
+
 `AllocationRepository.saveAndFlush` requires the allocation insert to be flushed
 before `saveAllocation` returns. This lets a database constraint failure surface
 inside its `try` block. `IdempotencyRecordRepository.save` does not explicitly flush;
@@ -130,15 +138,16 @@ objects already loaded or created in the current transaction. This conclusion is
 source-derived, not confirmed by a SQL log.
 
 **Existing-test coverage.**
-`AllocationServiceTests.allocateSavesAllocationAndIdempotencyRecordForNewKey` uses
-repository mocks to verify the branch and page size of one. It does not execute JPA,
-Hibernate, SQL, or PostgreSQL.
+`AllocationServiceTests.allocateSavesAllocationIdempotencyRecordAndOutboxIntentForNewKey`
+uses repository mocks to verify the branch and page size of one. It does not execute
+JPA, Hibernate, SQL, or PostgreSQL.
 
 ## Successful idempotency replay
 
 **Source-derived.** The replay branch performs the idempotency-key lookup and skips the
-game lookup, available-key query, allocation insert, and idempotency-record insert.
-The response still needs the original allocation, its game key, and the game.
+game lookup, available-key query, allocation insert, idempotency-record insert, event
+serialization, and outbox insert. The response still needs the original allocation,
+its game key, and the game.
 
 No replay request ran during the historical SQL inspection, so there is no observed
 statement count or observed lazy-initialization sequence for this path. The later
