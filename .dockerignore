@@ -7,3 +7,8 @@
 !pom.xml
 !src/
 !src/**
+!audit-service/
+!audit-service/Dockerfile
+!audit-service/pom.xml
+!audit-service/src/
+!audit-service/src/**

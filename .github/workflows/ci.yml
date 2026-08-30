@@ -25,11 +25,28 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      audit-postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: secure_gkd_audit
+          POSTGRES_USER: secure_gkd_audit_user
+          POSTGRES_PASSWORD: secure_gkd_audit_ci_password
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U secure_gkd_audit_user -d secure_gkd_audit"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       SPRING_PROFILES_ACTIVE: test
       SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/secure_gkd
       SPRING_DATASOURCE_USERNAME: secure_gkd_user
       SPRING_DATASOURCE_PASSWORD: secure_gkd_ci_password
+      AUDIT_DATASOURCE_URL: jdbc:postgresql://localhost:5433/secure_gkd_audit
+      AUDIT_DATASOURCE_USERNAME: secure_gkd_audit_user
+      AUDIT_DATASOURCE_PASSWORD: secure_gkd_audit_ci_password
 
     steps:
       - name: Checkout repository
@@ -45,8 +62,14 @@ jobs:
       - name: Make Maven wrapper executable
         run: chmod +x mvnw
 
-      - name: Run tests
+      - name: Run allocation-service tests
         run: ./mvnw test
 
-      - name: Build package
+      - name: Build allocation-service package
         run: ./mvnw package
+
+      - name: Run audit-service tests
+        run: ./mvnw -f audit-service/pom.xml test
+
+      - name: Build audit-service package
+        run: ./mvnw -f audit-service/pom.xml package

@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: secure-gkd-allocation-audit
+
+  main:
+    web-application-type: none
+
+  datasource:
+    url: ${AUDIT_DATASOURCE_URL:jdbc:postgresql://localhost:${AUDIT_DATABASE_HOST_PORT:55432}/secure_gkd_audit}
+    username: ${AUDIT_DATASOURCE_USERNAME:secure_gkd_audit_user}
+    password: ${AUDIT_DATASOURCE_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: ${AUDIT_DATABASE_SCHEMA:public}
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    default-schema: ${AUDIT_DATABASE_SCHEMA:public}
+    schemas: ${AUDIT_DATABASE_SCHEMA:public}
+    baseline-on-migrate: false
+    validate-on-migrate: true
+
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: record
+
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+secure-gkd:
+  audit:
+    consumer:
+      topic: ${AUDIT_KAFKA_TOPIC:secure-gkd.allocation-created}
+      group: ${AUDIT_KAFKA_CONSUMER_GROUP:secure-gkd-allocation-audit}

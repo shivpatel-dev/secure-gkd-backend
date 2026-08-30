@@ -188,16 +188,14 @@ See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 
 ### Status and current-state evidence
 
-**Transactional-outbox persistence and asynchronous Kafka publication implemented;
-audit consumption not implemented.** Secure GKD currently runs as one synchronous
-Spring Boot service backed by PostgreSQL, with an optional scheduled publisher.
-Docker Compose provides one local-development Kafka broker and a provisioned
-`secure-gkd.allocation-created` topic, and enables publication to it. The allocation
-service owns the version-1 `AllocationCreated` JSON contract, persists one outbox
-intent for each new Allocation, and publishes committed pending intents outside the
-allocation transaction. There is still no allocation-audit consumer/service,
-consumer idempotency, consumer retry/dead-letter handling, or audit-service
-persistence.
+**Transactional outbox, asynchronous Kafka publication, and independent audit
+consumption/persistence implemented.** Secure GKD contains the authoritative
+synchronous allocation service and one independently deployable allocation-audit
+background service. Docker Compose provides the existing local Kafka topic plus a
+separate PostgreSQL 16 database for each service. The audit service consumes version-1
+JSON with the stable `secure-gkd-allocation-audit` group and persists an audit-owned
+record after validating the schema and transport identity. Consumer idempotency and
+application-owned retry/backoff/dead-letter recovery are not implemented.
 
 The current allocation behavior remains authoritative. `AllocationService.allocate`
 owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation,
@@ -221,7 +219,7 @@ key selection, idempotency, or allocation correctness. Making that work synchron
 would add audit or transport availability to the caller's critical path even though
 an audit-processing delay should not prevent a valid allocation.
 
-The target design therefore adds exactly one independently deployable
+The implemented design therefore adds exactly one independently deployable
 allocation-audit consumer/service. Ownership remains deliberately coarse:
 
 | Owner | Responsibility and persistence boundary |
@@ -235,9 +233,9 @@ not write the audit service's tables, and the audit service does not read or wri
 the allocation service's Game, GameKey, Allocation, IdempotencyRecord, or outbox
 table.
 
-Kafka is the intended asynchronous transport. The versioned `AllocationCreated`
+Kafka is the asynchronous transport. The versioned `AllocationCreated`
 contract states the fact represented by one successfully created Allocation so the
-audit service can later process that fact independently. The event does not transfer
+audit service can process that fact independently. The event does not transfer
 ownership of allocation behavior or become a command that determines whether
 allocation succeeds. Secret game-key values must never cross this event boundary.
 The complete event fields, versioning and compatibility rules, identity semantics,
@@ -246,7 +244,8 @@ and current-versus-future boundary are defined in the
 
 ### Transaction and communication boundaries
 
-The target flow preserves one authoritative synchronous transaction while keeping networked publication and downstream processing outside it:
+The implemented flow preserves one authoritative synchronous transaction while
+keeping networked publication and downstream processing outside it:
 
 1. The allocation service performs the existing allocation workflow in its
    PostgreSQL transaction. That transaction alone decides whether the allocation
@@ -268,16 +267,17 @@ The target flow preserves one authoritative synchronous transaction while keepin
    transaction, also outside the synchronous allocation transaction.
 
 Once an allocation commits, publisher, Kafka, delivery, consumer, or audit-persistence
-failures must not invalidate it. Recovery retries downstream work instead of
-reversing the authoritative allocation.
+failures must not invalidate it. Later recovery work must resume downstream processing
+instead of reversing the authoritative allocation.
 
 ### Consistency, delivery, and failure assumptions
 
 The synchronous allocation response is consistent with the allocation service's
 committed PostgreSQL state. Audit state is eventually consistent and may lag while
 publication or processing recovers. The design assumes publication or delivery can
-occur more than once; later consumer work must therefore make processing idempotent.
-This is not an exactly-once end-to-end delivery claim.
+occur more than once. The current consumer retains source `eventId` but does not
+suppress duplicates, so an uncertain database/offset boundary can create another
+audit row. This is not an exactly-once or effectively-once end-to-end claim.
 
 Expected failure conditions include:
 
@@ -285,16 +285,17 @@ Expected failure conditions include:
 | --- | --- |
 | Kafka is temporarily unavailable after allocation commits | The committed outbox intent remains available for a later publication attempt; the allocation remains valid. |
 | The outbox publisher fails or restarts | It resumes from committed outbox state. An uncertain attempt can lead to duplicate publication. |
-| An event is published or delivered more than once | The audit consumer must tolerate duplicates through later idempotent-processing design. |
+| An event is published or delivered more than once | The current audit consumer can persist another effect; later idempotent-processing work must use the retained source identity. |
 | The audit consumer is unavailable | Audit state falls behind the allocation service's authoritative state until consumption can resume; the allocation remains valid. |
-| Audit processing or audit persistence fails | The audit work can be retried according to later operational design; it does not roll back or invalidate the allocation. |
+| Audit processing or audit persistence fails | The listener does not acknowledge successful processing; the baseline stops the listener container and requires restart after intervention. It does not roll back or invalidate the allocation. |
 
 The periodic polling cycle retries publisher failures. A selected batch is processed
 sequentially and stops at the first unsuccessful event. This supplies deterministic
 best-effort order in the current single-publisher, single-partition local environment,
-not a distributed ordering guarantee. Consumer retry timing, backoff, poison-message
-handling, and dead-letter policy are deliberately deferred rather than implied by
-this decision.
+not a distributed ordering guarantee. The consumer uses disabled auto-commit,
+`earliest` initial offsets, record acknowledgement, and a container-stopping error
+handler. Consumer retry classification/timing, backoff, poison-message handling, and
+dead-letter policy are deliberately deferred rather than implied by this decision.
 
 ### Why use a transactional outbox
 
@@ -312,8 +313,8 @@ publisher delivers committed pending intents to Kafka and records `published_at`
 only after producer acknowledgement. This avoids losing the intent
 across the database/Kafka boundary while keeping Kafka outside the allocation
 transaction. It still permits duplicate publication and delivery, so it requires
-idempotent downstream processing and does not provide exactly-once end-to-end
-delivery.
+later idempotent downstream processing and does not provide exactly-once end-to-end
+delivery. The present audit consumer deliberately exposes that temporary limitation.
 
 ### Rejected alternatives and tradeoffs
 
