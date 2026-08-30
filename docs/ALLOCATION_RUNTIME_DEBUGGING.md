@@ -140,9 +140,13 @@ an unhandled runtime exception leaves the method, the transaction is rolled back
    `Allocation.prePersist` supplies `allocatedAt` when needed.
 6. `IdempotencyRecordRepository.save` persists an `IdempotencyRecord` that stores the
    request's idempotency key and a one-to-one reference to the saved allocation.
-7. `toResponse` reads the allocation, its game key, and the key's game to create an
+7. The service creates one version-1 `AllocationCreated` with the persisted Allocation
+   and Game identities, the authoritative allocation time, and the existing
+   server-generated request ID. It serializes that contract and saves one
+   `AllocationOutbox` whose `publishedAt` is initially null.
+8. `toResponse` reads the allocation, its game key, and the key's game to create an
    `AllocationResponse(gameCode, keyCode, allocatedAt)`.
-8. The controller returns that response with `201 Created`.
+9. The controller returns that response with `201 Created`.
 
 `saveAndFlush` is important at step 5 because it sends the allocation insert to the
 database while execution is still inside `saveAllocation`. If another request has

@@ -1,5 +1,7 @@
 package com.shiv.securegkd.allocation;
 
+import com.shiv.securegkd.RequestCorrelationFilter;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
@@ -11,6 +13,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -68,6 +71,9 @@ class AllocationConcurrencyIntegrationTests {
 
     @Autowired
     private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
+    private AllocationOutboxRepository allocationOutboxRepository;
 
     @Autowired
     private DataSource dataSource;
@@ -222,6 +228,7 @@ class AllocationConcurrencyIntegrationTests {
     }
 
     private AttemptResult allocate(String idempotencyKey) {
+        MDC.put(RequestCorrelationFilter.MDC_KEY, "concurrency-" + idempotencyKey);
         try {
             AllocationResponse response = allocationService.allocate(
                     GAME_CODE,
@@ -230,6 +237,8 @@ class AllocationConcurrencyIntegrationTests {
             return new AttemptResult(idempotencyKey, response, null);
         } catch (Throwable failure) {
             return new AttemptResult(idempotencyKey, null, failure);
+        } finally {
+            MDC.remove(RequestCorrelationFilter.MDC_KEY);
         }
     }
 
@@ -255,6 +264,7 @@ class AllocationConcurrencyIntegrationTests {
     }
 
     private void deleteTestData() {
+        allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();

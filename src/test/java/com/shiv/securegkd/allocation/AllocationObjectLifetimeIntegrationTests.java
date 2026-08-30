@@ -8,6 +8,7 @@ import com.shiv.securegkd.gamekey.GameKey;
 import com.shiv.securegkd.gamekey.GameKeyRepository;
 import com.shiv.securegkd.idempotency.IdempotencyRecord;
 import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityManagerFactory;
 import jakarta.persistence.PersistenceContext;
@@ -86,6 +87,9 @@ class AllocationObjectLifetimeIntegrationTests {
 
     @MockitoSpyBean
     private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
+    private AllocationOutboxRepository allocationOutboxRepository;
 
     private final Trace trace = new Trace();
 
@@ -262,6 +266,7 @@ class AllocationObjectLifetimeIntegrationTests {
     }
 
     private void deleteTestData() {
+        allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();

@@ -4,6 +4,7 @@ import com.shiv.securegkd.allocation.AllocationRepository;
 import com.shiv.securegkd.allocation.AllocationRequest;
 import com.shiv.securegkd.allocation.AllocationResponse;
 import com.shiv.securegkd.allocation.AllocationService;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import com.shiv.securegkd.authentication.AuthenticationIdentityRepository;
 import com.shiv.securegkd.authentication.AuthenticationIdentity;
 import com.shiv.securegkd.authentication.AuthenticationRole;
@@ -18,6 +19,7 @@ import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -59,6 +61,9 @@ class DatabaseMigrationTests {
     private IdempotencyRecordRepository idempotencyRecordRepository;
 
     @Autowired
+    private AllocationOutboxRepository allocationOutboxRepository;
+
+    @Autowired
     private AllocationService allocationService;
 
     @Autowired
@@ -67,10 +72,12 @@ class DatabaseMigrationTests {
     @BeforeEach
     void setUp() {
         deleteTestData();
+        MDC.put(RequestCorrelationFilter.MDC_KEY, "migration-test-request-id");
     }
 
     @AfterEach
     void tearDown() {
+        MDC.remove(RequestCorrelationFilter.MDC_KEY);
         deleteTestData();
     }
 
@@ -101,6 +108,15 @@ class DatabaseMigrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 select count(*)
                 from flyway_schema_history
+                where version = '4'
+                  and description = 'create allocation outbox'
+                  and type = 'SQL'
+                  and success
+                """, Long.class)).isEqualTo(1L);
+
+        assertThat(jdbcTemplate.queryForObject("""
+                select count(*)
+                from flyway_schema_history
                 where version = '2'
                   and description = 'create authentication identities'
                   and type = 'SQL'
@@ -116,6 +132,7 @@ class DatabaseMigrationTests {
                       'game_keys',
                       'allocations',
                       'idempotency_records',
+                      'allocation_outbox',
                       'authentication_identities'
                   )
                 """, String.class)).containsExactlyInAnyOrder(
@@ -123,6 +140,7 @@ class DatabaseMigrationTests {
                 "game_keys",
                 "allocations",
                 "idempotency_records",
+                "allocation_outbox",
                 "authentication_identities"
         );
 
@@ -142,6 +160,13 @@ class DatabaseMigrationTests {
                 column("idempotency_records", "idempotency_key", "character varying", false, 255, null, false),
                 column("idempotency_records", "allocation_id", "bigint", false, null, null, false),
                 column("idempotency_records", "created_at", "timestamp with time zone", false, null, 6, false),
+                column("allocation_outbox", "event_id", "uuid", false, null, null, false),
+                column("allocation_outbox", "allocation_id", "bigint", false, null, null, false),
+                column("allocation_outbox", "event_type", "character varying", false, 100, null, false),
+                column("allocation_outbox", "schema_version", "integer", false, null, null, false),
+                column("allocation_outbox", "payload", "text", false, null, null, false),
+                column("allocation_outbox", "occurred_at", "timestamp with time zone", false, null, 6, false),
+                column("allocation_outbox", "published_at", "timestamp with time zone", true, null, 6, false),
                 column("authentication_identities", "id", "bigint", false, null, null, true),
                 column("authentication_identities", "username", "character varying", false, 100, null, false),
                 column("authentication_identities", "password_hash", "character varying", false, 255, null, false),
@@ -158,6 +183,7 @@ class DatabaseMigrationTests {
                       'game_keys',
                       'allocations',
                       'idempotency_records',
+                      'allocation_outbox',
                       'authentication_identities'
                   )
                   and constraint_type in ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')
@@ -174,9 +200,42 @@ class DatabaseMigrationTests {
                 "idempotency_records_idempotency_key_key",
                 "idempotency_records_allocation_id_key",
                 "idempotency_records_allocation_id_fkey",
+                "allocation_outbox_pkey",
+                "allocation_outbox_allocation_id_key",
+                "allocation_outbox_allocation_id_fkey",
                 "authentication_identities_pkey",
                 "authentication_identities_username_key"
         );
+
+        assertThat(jdbcTemplate.query("""
+                select table_constraint.constraint_name,
+                       key_column.table_name,
+                       key_column.column_name,
+                       referenced_column.table_name as referenced_table_name,
+                       referenced_column.column_name as referenced_column_name
+                from information_schema.table_constraints table_constraint
+                join information_schema.key_column_usage key_column
+                  on key_column.constraint_schema = table_constraint.constraint_schema
+                 and key_column.constraint_name = table_constraint.constraint_name
+                join information_schema.constraint_column_usage referenced_column
+                  on referenced_column.constraint_schema = table_constraint.constraint_schema
+                 and referenced_column.constraint_name = table_constraint.constraint_name
+                where table_constraint.constraint_schema = current_schema()
+                  and table_constraint.table_name = 'allocation_outbox'
+                  and table_constraint.constraint_type = 'FOREIGN KEY'
+                """, (resultSet, rowNumber) -> new ForeignKeyMetadata(
+                resultSet.getString("constraint_name"),
+                resultSet.getString("table_name"),
+                resultSet.getString("column_name"),
+                resultSet.getString("referenced_table_name"),
+                resultSet.getString("referenced_column_name")
+        ))).containsExactly(new ForeignKeyMetadata(
+                "allocation_outbox_allocation_id_fkey",
+                "allocation_outbox",
+                "allocation_id",
+                "allocations",
+                "id"
+        ));
 
         assertThat(jdbcTemplate.queryForList("""
                 select constraint_name
@@ -218,6 +277,7 @@ class DatabaseMigrationTests {
                 .isLessThanOrEqualTo(Duration.ofNanos(1_000));
         assertThat(allocationRepository.count()).isEqualTo(1L);
         assertThat(idempotencyRecordRepository.count()).isEqualTo(1L);
+        assertThat(allocationOutboxRepository.count()).isEqualTo(1L);
 
         MigrateResult repeatMigration = flyway.migrate();
 
@@ -225,15 +285,15 @@ class DatabaseMigrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version in ('1', '2', '3') and success
-                """, Long.class)).isEqualTo(3L);
+                where version in ('1', '2', '3', '4') and success
+                """, Long.class)).isEqualTo(4L);
     }
 
     @Test
     void roleMigrationBackfillsExistingIdentitiesAndConstrainsApprovedValues() {
         String schema = "role_migration_" + UUID.randomUUID().toString().replace("-", "");
         Flyway versionTwoFlyway = isolatedFlyway(schema, MigrationVersion.fromVersion("2"));
-        Flyway currentFlyway = isolatedFlyway(schema, null);
+        Flyway currentFlyway = isolatedFlyway(schema, MigrationVersion.fromVersion("3"));
 
         try {
             versionTwoFlyway.migrate();
@@ -296,6 +356,7 @@ class DatabaseMigrationTests {
                       'game_keys',
                       'allocations',
                       'idempotency_records',
+                      'allocation_outbox',
                       'authentication_identities'
                   )
                 """, (resultSet, rowNumber) -> new ColumnMetadata(
@@ -331,6 +392,7 @@ class DatabaseMigrationTests {
 
     private void deleteTestData() {
         authenticationIdentityRepository.deleteAllInBatch();
+        allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();
@@ -345,6 +407,15 @@ class DatabaseMigrationTests {
             Integer maximumLength,
             Integer datetimePrecision,
             boolean identity
+    ) {
+    }
+
+    private record ForeignKeyMetadata(
+            String constraintName,
+            String tableName,
+            String columnName,
+            String referencedTableName,
+            String referencedColumnName
     ) {
     }
 }

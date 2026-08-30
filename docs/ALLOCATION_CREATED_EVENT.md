@@ -3,13 +3,15 @@
 The allocation service owns the versioned `AllocationCreated` JSON contract. Version
 1 is defined in
 `com.shiv.securegkd.allocation.event.AllocationCreated` and is intentionally separate
-from HTTP DTOs, JPA entities, Kafka APIs, and any future transactional-outbox
-persistence type.
+from HTTP DTOs, JPA entities, Kafka APIs, and the
+`com.shiv.securegkd.allocation.outbox.AllocationOutbox` persistence type.
 
-This repository currently defines only the contract. The synchronous allocation flow
-does not create, persist, or publish an `AllocationCreated` event. There is no outbox,
-Kafka application client, producer, consumer, allocation-audit service, audit
-persistence, or distributed end-to-end event processing.
+For each newly created Allocation, the synchronous allocation transaction creates one
+version-1 event, serializes it to JSON, and persists its publication intent in the
+allocation service's `allocation_outbox` table. An idempotent replay creates no event
+or outbox row. There is no Kafka application client, producer, publisher, consumer,
+allocation-audit service, audit persistence, or distributed end-to-end event
+processing.
 
 ## Version 1 fields
 
@@ -32,8 +34,8 @@ duplicate publication. `allocationId` identifies the authoritative Allocation.
 `requestId` correlates diagnostics; it is not event identity, allocation identity, an
 allocation idempotency key, or a delivery-deduplication key.
 
-`occurredAt` and `allocatedAt` also remain distinct. `occurredAt` records when future
-event-creation work creates the event intent. `allocatedAt` comes from the Allocation
+`occurredAt` and `allocatedAt` also remain distinct. `occurredAt` records when the
+allocation service creates the event intent. `allocatedAt` comes from the Allocation
 and remains the authoritative allocation timestamp.
 
 A representative version-1 payload is:
@@ -62,6 +64,11 @@ allocation correctness. Kafka availability and future audit processing do not de
 whether synchronous allocation succeeds. Future publication may be duplicated, and
 this contract does not imply exactly-once end-to-end delivery.
 
+The outbox row stores the same `eventId`, schema version, and `occurredAt` as the JSON
+payload, references the authoritative Allocation, and starts with `published_at` set
+to `NULL`. The Allocation, its IdempotencyRecord, and this event intent commit or roll
+back together. PostgreSQL also permits only one outbox intent per Allocation.
+
 ## Compatibility and evolution
 
 Version-1 property names, types, and meanings must not be removed, renamed, or
@@ -78,8 +85,8 @@ Avro, or Protobuf boundary.
 
 ## Ownership, transport, and sensitive data
 
-The allocation service owns the contract and will eventually own creation of the
-event. `secure-gkd.allocation-created` is the intended Kafka transport. A later
+The allocation service owns the contract and event-intent creation.
+`secure-gkd.allocation-created` is the intended Kafka transport. A later
 allocation-audit service will consume the contract and own only the audit records it
 derives; it will not own or redefine allocation semantics.
 
@@ -89,7 +96,11 @@ key; username or password material; Bearer token; JWT contents or signing materi
 datasource credentials; arbitrary request payload; or arbitrary request header.
 `AllocationResponse` is not reused because its `keyCode` is the allocated secret.
 
-Transactional-outbox persistence, event creation, Kafka publication and recovery,
-allocation-audit consumption and persistence, and consumer idempotency remain future
-work. Their later implementation must preserve the synchronous and PostgreSQL-backed
+Transactional-outbox persistence and event creation are implemented. Kafka
+publication and recovery, allocation-audit consumption and persistence, and consumer
+idempotency remain future work. Newly created outbox records remain durable, pending
+records must not be discarded, and no automatic cleanup or deletion exists.
+Retention or deletion of successfully published records will be decided only after
+publication behavior exists; this repository makes no claim about a production
+retention period. Later work must preserve the synchronous and PostgreSQL-backed
 correctness boundary described in [Architecture decision 7](DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).

@@ -13,6 +13,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 @Entity
 @Table(name = "allocations")
@@ -39,7 +40,7 @@ public class Allocation {
     @PrePersist
     void prePersist() {
         if (allocatedAt == null) {
-            allocatedAt = Instant.now();
+            allocatedAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
         }
     }
 

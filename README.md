@@ -8,10 +8,10 @@ idempotency.
 
 The allocation response is authoritative and synchronous. Docker Compose provides a
 single local Kafka broker and a provisioned topic for future allocation events, but
-the application has no Kafka client, transactional outbox, producer, consumer, audit
-service, or asynchronous allocation path. The application-owned, version-1
-`AllocationCreated` JSON contract is defined, but the allocation flow does not yet
-create, persist, or publish `AllocationCreated` events.
+the application has no Kafka client, producer, consumer, audit service, or
+asynchronous allocation path. For each new Allocation, the allocation transaction
+creates the application-owned version-1 `AllocationCreated` event intent and persists
+it in the `allocation_outbox` table. Nothing publishes those durable intents yet.
 
 ## Current capabilities
 
@@ -22,8 +22,8 @@ create, persist, or publish `AllocationCreated` events.
 - USER-or-ADMIN allocation of an already-provisioned GameKey.
 - Exact-key idempotency: replaying an idempotency key returns its original allocation
   instead of consuming another GameKey.
-- An application-owned, version-1 `AllocationCreated` JSON contract that excludes
-  secret GameKey data; event creation and publication remain future work.
+- Atomic persistence of one application-owned, version-1 `AllocationCreated` outbox
+  intent for each new Allocation, excluding secret GameKey and idempotency-key data.
 - Flyway-owned PostgreSQL migrations with Hibernate schema validation.
 - Bean Validation-backed request validation and structured public API error handling.
 - Per-request `X-Request-Id` correlation and bounded application-owned
@@ -39,9 +39,10 @@ access PostgreSQL. Controllers do not expose JPA entities as API responses.
 
 `AllocationService.allocate` owns the allocation transaction. It checks for an
 existing idempotency record, finds the requested Game and first available GameKey,
-persists the Allocation and IdempotencyRecord, and constructs the response within the
-same transaction. Persisted replay handling prevents an exact replay from consuming
-another key. Candidate selection does not lock or reserve a GameKey, so PostgreSQL's
+persists the Allocation, IdempotencyRecord, and serialized `AllocationCreated` outbox
+intent, and constructs the response within the same transaction. Persisted replay
+handling prevents an exact replay from consuming another key or creating another
+event intent. Candidate selection does not lock or reserve a GameKey, so PostgreSQL's
 unique constraint allowing only one Allocation per GameKey is the final
 duplicate-allocation protection.
 
@@ -247,13 +248,13 @@ continuously running public deployment. See
 
 ## Planned future direction
 
-A later distributed-system phase may publish the defined versioned allocation event
-using transactional-outbox reasoning and add one independent consumer with
-idempotent event processing. The local broker and provisioned topic are implemented
-infrastructure, and the version-1 JSON contract is defined; the outbox, event
-creation, producer, consumer, and audit behavior remain planned concepts. The present
-correctness boundary remains the synchronous `AllocationService.allocate`
-transaction and its PostgreSQL constraints. See the
+A later distributed-system phase may publish the persisted versioned allocation
+events and add one independent consumer with idempotent event processing. The local
+broker and provisioned topic, version-1 JSON contract, and transactional-outbox
+persistence are implemented. The producer, publisher recovery, consumer, and audit
+behavior remain planned concepts. The present correctness boundary remains the
+synchronous `AllocationService.allocate` transaction and its PostgreSQL constraints;
+Kafka availability is not consulted. See the
 [AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) for its fields,
 semantics, compatibility rules, ownership, and sensitive-data boundary.
 The accepted boundary, transaction model, delivery assumptions, and rejected

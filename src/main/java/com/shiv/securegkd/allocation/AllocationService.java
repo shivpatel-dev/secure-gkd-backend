@@ -1,5 +1,11 @@
 package com.shiv.securegkd.allocation;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.shiv.securegkd.RequestCorrelationFilter;
+import com.shiv.securegkd.allocation.event.AllocationCreated;
+import com.shiv.securegkd.allocation.outbox.AllocationOutbox;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import com.shiv.securegkd.game.Game;
 import com.shiv.securegkd.game.GameRepository;
 import com.shiv.securegkd.gamekey.GameKey;
@@ -11,7 +17,10 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
+import java.util.UUID;
 
 @Service
 public class AllocationService {
@@ -22,17 +31,23 @@ public class AllocationService {
     private final GameKeyRepository gameKeyRepository;
     private final AllocationRepository allocationRepository;
     private final IdempotencyRecordRepository idempotencyRecordRepository;
+    private final AllocationOutboxRepository allocationOutboxRepository;
+    private final ObjectMapper objectMapper;
 
     public AllocationService(
             GameRepository gameRepository,
             GameKeyRepository gameKeyRepository,
             AllocationRepository allocationRepository,
-            IdempotencyRecordRepository idempotencyRecordRepository
+            IdempotencyRecordRepository idempotencyRecordRepository,
+            AllocationOutboxRepository allocationOutboxRepository,
+            ObjectMapper objectMapper
     ) {
         this.gameRepository = gameRepository;
         this.gameKeyRepository = gameKeyRepository;
         this.allocationRepository = allocationRepository;
         this.idempotencyRecordRepository = idempotencyRecordRepository;
+        this.allocationOutboxRepository = allocationOutboxRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -56,8 +71,46 @@ public class AllocationService {
 
         Allocation savedAllocation = saveAllocation(gameCode, gameKey);
         idempotencyRecordRepository.save(new IdempotencyRecord(request.idempotencyKey(), savedAllocation));
+        persistAllocationCreated(savedAllocation);
 
         return toResponse(savedAllocation);
+    }
+
+    private void persistAllocationCreated(Allocation allocation) {
+        Game game = allocation.getGameKey().getGame();
+        UUID eventId = UUID.randomUUID();
+        Instant occurredAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        String requestId = Objects.requireNonNull(
+                RequestCorrelationFilter.currentRequestId(),
+                "requestId is required"
+        );
+        AllocationCreated event = new AllocationCreated(
+                eventId,
+                AllocationCreated.SCHEMA_VERSION,
+                occurredAt,
+                allocation.getId(),
+                allocation.getAllocatedAt(),
+                game.getId(),
+                game.getCode(),
+                requestId
+        );
+
+        allocationOutboxRepository.save(new AllocationOutbox(
+                event.eventId(),
+                allocation,
+                AllocationOutbox.ALLOCATION_CREATED_EVENT_TYPE,
+                event.schemaVersion(),
+                serialize(event),
+                event.occurredAt()
+        ));
+    }
+
+    private String serialize(AllocationCreated event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("Failed to serialize AllocationCreated event", exception);
+        }
     }
 
     private Allocation saveAllocation(String gameCode, GameKey gameKey) {

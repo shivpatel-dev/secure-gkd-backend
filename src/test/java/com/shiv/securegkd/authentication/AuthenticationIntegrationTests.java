@@ -12,6 +12,7 @@ import com.shiv.securegkd.gamekey.GameKey;
 import com.shiv.securegkd.gamekey.GameKeyRepository;
 import com.shiv.securegkd.allocation.AllocationRepository;
 import com.shiv.securegkd.allocation.AllocationRequest;
+import com.shiv.securegkd.allocation.outbox.AllocationOutboxRepository;
 import com.shiv.securegkd.idempotency.IdempotencyRecordRepository;
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -83,6 +84,9 @@ class AuthenticationIntegrationTests {
 
     @Autowired
     private IdempotencyRecordRepository idempotencyRecordRepository;
+
+    @Autowired
+    private AllocationOutboxRepository allocationOutboxRepository;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -483,6 +487,7 @@ class AuthenticationIntegrationTests {
 
     private void deleteTestData() {
         identityRepository.deleteAllInBatch();
+        allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
         allocationRepository.deleteAllInBatch();
         gameKeyRepository.deleteAllInBatch();

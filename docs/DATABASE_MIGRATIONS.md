@@ -11,7 +11,10 @@ the normal application schema.
 `V2__create_authentication_identities.sql` adds the separate persisted identity used
 for credential authentication. `V3__add_authentication_identity_roles.sql` adds the
 required, constrained `USER` or `ADMIN` role and assigns the conservative `USER`
-baseline to identities that already exist when the migration runs. A clean database
+baseline to identities that already exist when the migration runs.
+`V4__create_allocation_outbox.sql` adds the allocation service's transactional outbox
+with a UUID event primary key, one unique foreign-key reference per Allocation,
+versioned JSON payload metadata, and nullable publication timestamp. A clean database
 is initialized by starting the application with a database user that can create the
 required objects; Flyway creates its schema-history table, applies pending versions
 in order, and records each successful migration. Starting the application again
