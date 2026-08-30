@@ -14,8 +14,11 @@ required, constrained `USER` or `ADMIN` role and assigns the conservative `USER`
 baseline to identities that already exist when the migration runs.
 `V4__create_allocation_outbox.sql` adds the allocation service's transactional outbox
 with a UUID event primary key, one unique foreign-key reference per Allocation,
-versioned JSON payload metadata, and nullable publication timestamp. A clean database
-is initialized by starting the application with a database user that can create the
+versioned JSON payload metadata, and nullable publication timestamp.
+`V5__index_pending_allocation_outbox.sql` adds a focused partial index on
+`occurred_at, event_id` for rows whose `published_at` is null. It supports bounded,
+deterministic oldest-first publisher polling without indexing published history. A
+clean database is initialized by starting the application with a database user that can create the
 required objects; Flyway creates its schema-history table, applies pending versions
 in order, and records each successful migration. Starting the application again
 validates the recorded migrations and does not reapply them.

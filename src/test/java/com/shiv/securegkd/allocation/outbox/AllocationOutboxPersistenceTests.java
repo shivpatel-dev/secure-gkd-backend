@@ -24,6 +24,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -32,6 +33,7 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,6 +69,9 @@ class AllocationOutboxPersistenceTests {
 
     @Autowired
     private AllocationOutboxRepository allocationOutboxRepository;
+
+    @Autowired
+    private AllocationOutboxPublicationStatusService publicationStatusService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -180,6 +185,48 @@ class AllocationOutboxPersistenceTests {
         assertThat(allocationOutboxRepository.count()).isEqualTo(1L);
     }
 
+    @Test
+    void pendingQueryExcludesPublishedRowsAndAppliesStableOldestFirstBoundedOrdering() {
+        Game game = gameRepository.findById(gameId).orElseThrow();
+        Instant oldest = Instant.parse("2026-01-02T03:04:05Z");
+        Instant newest = Instant.parse("2026-01-02T03:04:06Z");
+        UUID firstId = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        UUID secondId = UUID.fromString("00000000-0000-0000-0000-000000000002");
+        UUID thirdId = UUID.fromString("00000000-0000-0000-0000-000000000003");
+        UUID publishedId = UUID.fromString("00000000-0000-0000-0000-000000000000");
+
+        saveOutbox(game, "ORDER-KEY-003", thirdId, newest, "third-payload");
+        saveOutbox(game, "ORDER-KEY-002", secondId, oldest, "second-payload");
+        saveOutbox(game, "ORDER-KEY-PUBLISHED", publishedId, oldest.minusSeconds(1), "published-payload");
+        saveOutbox(game, "ORDER-KEY-001", firstId, oldest, "first-payload");
+        assertThat(publicationStatusService.markPublished(publishedId, newest.plusSeconds(1))).isTrue();
+
+        List<AllocationOutbox> pending = allocationOutboxRepository
+                .findByPublishedAtIsNullOrderByOccurredAtAscEventIdAsc(PageRequest.of(0, 2));
+
+        assertThat(pending)
+                .extracting(AllocationOutbox::getEventId)
+                .containsExactly(firstId, secondId);
+        assertThat(pending)
+                .extracting(AllocationOutbox::getPayload)
+                .containsExactly("first-payload", "second-payload");
+    }
+
+    @Test
+    void publicationStatusUpdateRecordsOnlyTheFirstAcknowledgementTimestamp() {
+        Game game = gameRepository.findById(gameId).orElseThrow();
+        UUID eventId = UUID.fromString("00000000-0000-0000-0000-000000000010");
+        Instant firstAcknowledgement = Instant.parse("2026-01-02T03:04:05Z");
+        Instant laterAcknowledgement = firstAcknowledgement.plusSeconds(10);
+        saveOutbox(game, "STATUS-KEY-001", eventId, firstAcknowledgement.minusSeconds(1), "payload");
+
+        assertThat(publicationStatusService.markPublished(eventId, firstAcknowledgement)).isTrue();
+        assertThat(publicationStatusService.markPublished(eventId, laterAcknowledgement)).isFalse();
+
+        assertThat(allocationOutboxRepository.findById(eventId).orElseThrow().getPublishedAt())
+                .isEqualTo(firstAcknowledgement);
+    }
+
     private void deleteTestData() {
         allocationOutboxRepository.deleteAllInBatch();
         idempotencyRecordRepository.deleteAllInBatch();
@@ -195,5 +242,24 @@ class AllocationOutboxPersistenceTests {
                         .content(objectMapper.writeValueAsBytes(new AllocationRequest(IDEMPOTENCY_KEY))))
                 .andExpect(status().isCreated())
                 .andReturn();
+    }
+
+    private void saveOutbox(
+            Game game,
+            String gameKeyCode,
+            UUID eventId,
+            Instant occurredAt,
+            String payload
+    ) {
+        GameKey gameKey = gameKeyRepository.saveAndFlush(new GameKey(game, gameKeyCode));
+        Allocation allocation = allocationRepository.saveAndFlush(new Allocation(gameKey));
+        allocationOutboxRepository.saveAndFlush(new AllocationOutbox(
+                eventId,
+                allocation,
+                AllocationOutbox.ALLOCATION_CREATED_EVENT_TYPE,
+                AllocationCreated.SCHEMA_VERSION,
+                payload,
+                occurredAt
+        ));
     }
 }

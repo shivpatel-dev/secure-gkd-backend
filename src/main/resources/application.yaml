@@ -19,7 +19,25 @@ spring:
     baseline-on-migrate: false
     validate-on-migrate: true
 
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 5000
+
 secure-gkd:
+  kafka:
+    publisher:
+      enabled: ${SECURE_GKD_KAFKA_PUBLISHER_ENABLED:false}
+      topic: ${SECURE_GKD_KAFKA_PUBLISHER_TOPIC:secure-gkd.allocation-created}
+      poll-interval: ${SECURE_GKD_KAFKA_PUBLISHER_POLL_INTERVAL:PT1S}
+      batch-size: ${SECURE_GKD_KAFKA_PUBLISHER_BATCH_SIZE:100}
+      acknowledgement-timeout: ${SECURE_GKD_KAFKA_PUBLISHER_ACKNOWLEDGEMENT_TIMEOUT:PT10S}
   security:
     jwt:
       signing-key-base64: ${JWT_SIGNING_KEY_BASE64}

@@ -6,12 +6,13 @@ service backed by PostgreSQL. The service can authenticate pre-existing identiti
 create and retrieve Games, and allocate an available GameKey with persisted
 idempotency.
 
-The allocation response is authoritative and synchronous. Docker Compose provides a
-single local Kafka broker and a provisioned topic for future allocation events, but
-the application has no Kafka client, producer, consumer, audit service, or
-asynchronous allocation path. For each new Allocation, the allocation transaction
-creates the application-owned version-1 `AllocationCreated` event intent and persists
-it in the `allocation_outbox` table. Nothing publishes those durable intents yet.
+The allocation response is authoritative and synchronous. For each new Allocation,
+the allocation transaction creates the application-owned version-1
+`AllocationCreated` event intent and persists it in the `allocation_outbox` table. An
+optional background publisher now delivers committed pending intents to the existing
+`secure-gkd.allocation-created` Kafka topic. Docker Compose enables that publisher
+against its single local broker; standalone runtime remains publisher-disabled by
+default. There is still no Kafka consumer, audit service, or audit persistence.
 
 ## Current capabilities
 
@@ -24,6 +25,8 @@ it in the `allocation_outbox` table. Nothing publishes those durable intents yet
   instead of consuming another GameKey.
 - Atomic persistence of one application-owned, version-1 `AllocationCreated` outbox
   intent for each new Allocation, excluding secret GameKey and idempotency-key data.
+- Optional asynchronous, acknowledged, at-least-once Kafka publication of pending
+  outbox intents using their persisted event UUID and exact stored JSON payload.
 - Flyway-owned PostgreSQL migrations with Hibernate schema validation.
 - Bean Validation-backed request validation and structured public API error handling.
 - Per-request `X-Request-Id` correlation and bounded application-owned
@@ -56,6 +59,7 @@ flows and [Architecture decisions](docs/DECISIONS.md) for their rationale and li
 - Java 17 and Spring Boot 3.5
 - Spring MVC, Spring Security, and OAuth2 Resource Server
 - Spring Data JPA, Hibernate, and HikariCP
+- Spring Kafka producer support
 - PostgreSQL (version 16 is the Compose, CI, and controlled deployment-verification
   baseline)
 - Apache Kafka 4.3.1 in single-node KRaft mode for local infrastructure only
@@ -248,13 +252,15 @@ continuously running public deployment. See
 
 ## Planned future direction
 
-A later distributed-system phase may publish the persisted versioned allocation
-events and add one independent consumer with idempotent event processing. The local
-broker and provisioned topic, version-1 JSON contract, and transactional-outbox
-persistence are implemented. The producer, publisher recovery, consumer, and audit
-behavior remain planned concepts. The present correctness boundary remains the
+A later distributed-system phase may add one independent consumer with idempotent
+event processing. The local broker and provisioned topic, version-1 JSON contract,
+transactional-outbox persistence, and optional background Kafka publisher are
+implemented. Pending intents survive publisher restarts, while acknowledged sends
+can still be published again if the database timestamp update does not commit. Audit
+consumption, consumer idempotency, consumer retry/dead-letter behavior, and audit
+persistence remain planned concepts. The present correctness boundary remains the
 synchronous `AllocationService.allocate` transaction and its PostgreSQL constraints;
-Kafka availability is not consulted. See the
+Kafka availability is not consulted while deciding allocation success. See the
 [AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) for its fields,
 semantics, compatibility rules, ownership, and sensitive-data boundary.
 The accepted boundary, transaction model, delivery assumptions, and rejected

@@ -42,3 +42,25 @@ adoption rules. The application-level 16 KiB JSON request-body boundary applies
 uniformly to every profile and is intentionally a single fixed API boundary rather
 than a profile-specific deployment setting; see [API notes](API_NOTES.md) for the
 covered operations, `413` response, and deferred abuse-control decisions.
+
+## Optional Kafka outbox publisher
+
+The Kafka publisher is disabled by default in every profile, so standalone and
+production-oriented startup do not require a reachable broker. Docker Compose opts in
+with `SECURE_GKD_KAFKA_PUBLISHER_ENABLED=true` and supplies
+`SPRING_KAFKA_BOOTSTRAP_SERVERS=kafka:9092`. A runtime that deliberately enables the
+publisher may also configure:
+
+| Variable | Default and boundary |
+| --- | --- |
+| `SECURE_GKD_KAFKA_PUBLISHER_TOPIC` | `secure-gkd.allocation-created`; the established transport boundary. |
+| `SECURE_GKD_KAFKA_PUBLISHER_POLL_INTERVAL` | `PT1S`; a positive duration between completed polling cycles. |
+| `SECURE_GKD_KAFKA_PUBLISHER_BATCH_SIZE` | `100`; accepted values are 1 through 1,000. |
+| `SECURE_GKD_KAFKA_PUBLISHER_ACKNOWLEDGEMENT_TIMEOUT` | `PT10S`; must be positive and no greater than one minute. |
+
+The shared producer configuration uses string keys and values, `acks=all`, a five
+second request timeout, a five second metadata/send blocking bound, and a ten second
+delivery timeout. The publisher waits for producer acknowledgement before recording
+`published_at`. Failures remain pending for scheduled retry, and acknowledged events
+can still be duplicated if the separate database status update does not commit. No
+exactly-once, consumer, or downstream-processing guarantee is implied.

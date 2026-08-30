@@ -188,16 +188,16 @@ See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 
 ### Status and current-state evidence
 
-**Transactional-outbox persistence implemented; publication and audit behavior not
-implemented.** Secure GKD currently runs as one synchronous Spring Boot service
-backed by PostgreSQL. Docker Compose provides one local-development Kafka broker and
-a provisioned `secure-gkd.allocation-created` topic as transport infrastructure. The
-allocation service owns the version-1 `AllocationCreated` JSON contract and now
-creates and persists one outbox intent for each new Allocation. The application still
-has no Kafka client dependency or configuration, outbox publisher, event publication,
-allocation-audit consumer/service, or audit-service persistence. The architecture
-below distinguishes the implemented local transaction from later publication and
-audit work.
+**Transactional-outbox persistence and asynchronous Kafka publication implemented;
+audit consumption not implemented.** Secure GKD currently runs as one synchronous
+Spring Boot service backed by PostgreSQL, with an optional scheduled publisher.
+Docker Compose provides one local-development Kafka broker and a provisioned
+`secure-gkd.allocation-created` topic, and enables publication to it. The allocation
+service owns the version-1 `AllocationCreated` JSON contract, persists one outbox
+intent for each new Allocation, and publishes committed pending intents outside the
+allocation transaction. There is still no allocation-audit consumer/service,
+consumer idempotency, consumer retry/dead-letter handling, or audit-service
+persistence.
 
 The current allocation behavior remains authoritative. `AllocationService.allocate`
 owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation,
@@ -261,7 +261,9 @@ The target flow preserves one authoritative synchronous transaction while keepin
    consistent with the service's committed database state. Kafka or audit-service
    availability must not determine whether an otherwise valid allocation succeeds.
 4. A separate outbox publisher publishes committed intents to Kafka outside the
-   synchronous allocation transaction.
+   synchronous allocation transaction. It polls a bounded deterministic batch,
+   sends the persisted JSON keyed by the event UUID, waits for acknowledgement, and
+   records publication status in a separate transaction.
 5. The allocation-audit service consumes and persists audit results in its own
    transaction, also outside the synchronous allocation transaction.
 
@@ -287,8 +289,12 @@ Expected failure conditions include:
 | The audit consumer is unavailable | Audit state falls behind the allocation service's authoritative state until consumption can resume; the allocation remains valid. |
 | Audit processing or audit persistence fails | The audit work can be retried according to later operational design; it does not roll back or invalidate the allocation. |
 
-Retry timing, backoff, poison-message handling, and dead-letter policy are deliberately
-deferred rather than implied by this decision.
+The periodic polling cycle retries publisher failures. A selected batch is processed
+sequentially and stops at the first unsuccessful event. This supplies deterministic
+best-effort order in the current single-publisher, single-partition local environment,
+not a distributed ordering guarantee. Consumer retry timing, backoff, poison-message
+handling, and dead-letter policy are deliberately deferred rather than implied by
+this decision.
 
 ### Why use a transactional outbox
 
@@ -301,8 +307,9 @@ failure windows.
 
 The selected reliability boundary is therefore a transactional outbox owned by the
 allocation service. The current implementation commits the allocation state and
-publish intent atomically in one PostgreSQL transaction. A later independent
-publisher will deliver committed intents to Kafka. This avoids losing the intent
+publish intent atomically in one PostgreSQL transaction. An independent scheduled
+publisher delivers committed pending intents to Kafka and records `published_at`
+only after producer acknowledgement. This avoids losing the intent
 across the database/Kafka boundary while keeping Kafka outside the allocation
 transaction. It still permits duplicate publication and delivery, so it requires
 idempotent downstream processing and does not provide exactly-once end-to-end
