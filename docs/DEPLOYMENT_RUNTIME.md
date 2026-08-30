@@ -5,9 +5,11 @@ existing application container. It does not select a hosting provider or define
 provider-specific infrastructure.
 
 The repository's single-node Kafka service and topic initialization belong only to
-the Docker Compose local-development environment. They do not add Kafka to this
-application-container contract, provision external Kafka, or change the production
-deployment architecture described here.
+the Docker Compose local-development environment. The application image contains an
+optional Kafka outbox publisher, but it is disabled by default and does not make a
+Kafka cluster part of this provider-neutral core runtime contract. This repository
+does not provision external Kafka or change the production deployment architecture
+described here.
 
 ## Deployment artifact and Java runtime
 
@@ -37,6 +39,12 @@ The deployment environment must explicitly supply these variables:
 `JWT_ACCESS_TOKEN_LIFETIME` is optional. When omitted, it retains the existing
 `PT15M` default. An override must be a whole number of seconds from one second
 through 24 hours, as described in [Security](SECURITY.md#jwt-boundary).
+
+`SECURE_GKD_KAFKA_PUBLISHER_ENABLED` is optional and defaults to `false`. A deployment
+that deliberately enables it must separately provide a reachable
+`SPRING_KAFKA_BOOTSTRAP_SERVERS` value and the publisher settings described in
+[Configuration profiles](CONFIGURATION_PROFILES.md#optional-kafka-outbox-publisher).
+Kafka readiness is not an application-startup or synchronous-allocation prerequisite.
 
 These values must be supplied through the selected runtime's external configuration
 mechanism. Do not place credentials, signing material, access tokens, secret game-key

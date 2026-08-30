@@ -61,7 +61,7 @@ The service owns application behavior for the following PostgreSQL-backed record
 | GameKeys | Each GameKey belongs to one Game. The allocation workflow selects the first available key by ID; PostgreSQL requires key codes to be unique. There is currently no public GameKey-provisioning endpoint. |
 | Allocations | Each Allocation references exactly one GameKey and records its allocation time. A unique database constraint permits at most one Allocation per GameKey. |
 | IdempotencyRecords | Each record maps one exact idempotency key to one Allocation. Separate unique constraints enforce one record per key and one record per Allocation. |
-| Allocation outbox intents | Each row stores one serialized version-1 `AllocationCreated` intent for one Allocation. Its event UUID is the primary key, its Allocation reference is unique, and `published_at` remains null until later publication work exists. |
+| Allocation outbox intents | Each row stores one serialized version-1 `AllocationCreated` intent for one Allocation. Its event UUID is the primary key, its Allocation reference is unique, and `published_at` remains null until Kafka acknowledges publication. |
 | Authentication identities | Credential authentication reads a unique username, encoded password hash, and required role from the database. Identity provisioning and account management are external responsibilities because this service has no identity-management API. |
 | Roles | Each authentication identity has exactly one supported role, `USER` or `ADMIN`. The Java enum and PostgreSQL check constraint define the same allowed values; roles are not a separate persistence resource. |
 
@@ -114,7 +114,7 @@ database uniqueness constraint is the final duplicate-allocation protection. See
 and [allocation concurrency evidence](ALLOCATION_CONCURRENCY.md) for the controlled
 observation and its limits.
 
-## Allocation event contract and outbox persistence
+## Allocation event contract, outbox persistence, and publication
 
 The allocation service now owns a version-1 `AllocationCreated` JSON contract. It
 defines event and allocation identities, event-intent and authoritative allocation
@@ -124,11 +124,24 @@ HTTP response DTOs, JPA entities, Kafka APIs, and the outbox persistence type.
 
 For a new Allocation, `AllocationService.allocate` persists the Allocation,
 IdempotencyRecord, and one serialized event intent atomically. Idempotent replay
-returns the original Allocation without creating another intent. Kafka publication
-is not implemented, Kafka availability is not consulted, and there is no audit
-consumer or audit persistence. The exact fields, semantics, compatibility rules,
-retention boundary, ownership, secret exclusions, and future-work boundary are in the
-[AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
+returns the original Allocation without creating another intent. Outside that
+synchronous transaction, an optional scheduled publisher selects a bounded batch of
+unpublished rows in `occurred_at`, then `event_id`, order. It sends each row's exact
+stored payload sequentially to `secure-gkd.allocation-created`, keyed by the persisted
+event UUID, and waits for bounded Kafka acknowledgement before conditionally recording
+`published_at` in a separate transaction. The batch stops on the first failure so
+later selected rows remain pending behind it.
+
+Kafka availability is not consulted by the allocation transaction. A send failure or
+timeout leaves the durable intent pending for a later polling cycle and restart
+recovery. Kafka acknowledgement followed by a process or database-update failure can
+cause the pending event to be sent again. Publication is therefore at-least-once, not
+exactly-once. The current single publisher and single-partition Compose topic provide
+deterministic best-effort order for normal polling, not a global ordering guarantee
+across retries, crashes, multiple instances, or future partition changes. There is no
+audit consumer or audit persistence. The exact fields, semantics, compatibility
+rules, retention boundary, ownership, secret exclusions, and future-work boundary are
+in the [AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
 
 ## Authentication and authorization
 

@@ -76,13 +76,17 @@ The broker health check requests Kafka topic metadata, so a merely running conta
 process is not considered ready. After the broker becomes healthy, the one-shot
 `kafka-topic-init` service idempotently ensures that
 `secure-gkd.allocation-created` exists with one partition and replication factor one,
-then describes it and exits. This topic is transport infrastructure only: it does not
-define an `AllocationCreated` payload, schema, compatibility contract, producer, or
-consumer.
+then describes it and exits. Broker-side automatic topic creation is disabled so this
+explicit initialization remains authoritative. This topic is transport infrastructure
+only: it does not define the `AllocationCreated` payload, schema, or compatibility
+contract, and it does not add a consumer.
 
 The application still depends only on healthy PostgreSQL. It shares the Compose
-network with Kafka, but it has no Kafka client and does not use Kafka for startup,
-allocation correctness, or request processing.
+network with Kafka and Compose enables its optional outbox publisher using
+`kafka:9092`. Kafka health is deliberately absent from the application's startup
+dependencies: a broker outage must not prevent startup, determine allocation
+correctness, or participate in request processing. Committed pending rows recover
+through later publisher polling.
 
 The application image uses Java 17. Its build stage invokes the repository Maven
 Wrapper, and the runtime stage contains the packaged Spring Boot application without
@@ -117,8 +121,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafk
 The description should report `PartitionCount: 1`, `ReplicationFactor: 1`, and one
 partition whose leader, replica, and in-sync replica are the local broker.
 
-Verify the application container's network path without adding application Kafka
-behavior:
+Verify the application container's Kafka network path:
 
 ```sh
 docker compose exec application getent hosts kafka
@@ -135,6 +138,27 @@ topic:
 ```sh
 docker compose run --rm kafka-topic-init
 ```
+
+Inspect acknowledged publications with the broker's command-line consumer rather
+than adding an application consumer:
+
+```sh
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:9092 \
+  --topic secure-gkd.allocation-created \
+  --from-beginning \
+  --property print.key=true \
+  --property key.separator=' | '
+```
+
+The printed key is the persisted outbox `event_id`; the value is the exact stored
+version-1 JSON payload. `published_at` becomes non-null only after producer
+acknowledgement. It does not prove consumer processing. Stop the command after the
+bounded messages needed for local verification. If the broker is unavailable, new
+allocations remain valid and their outbox rows remain pending; after broker recovery,
+the scheduled publisher retries them. A crash or database failure after Kafka accepts
+a message but before `published_at` commits can produce the same key and payload more
+than once.
 
 If startup or a check does not complete, inspect bounded recent logs rather than
 exposing the rendered Compose configuration:

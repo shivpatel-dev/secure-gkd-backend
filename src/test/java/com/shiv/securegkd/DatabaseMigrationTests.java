@@ -117,6 +117,15 @@ class DatabaseMigrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 select count(*)
                 from flyway_schema_history
+                where version = '5'
+                  and description = 'index pending allocation outbox'
+                  and type = 'SQL'
+                  and success
+                """, Long.class)).isEqualTo(1L);
+
+        assertThat(jdbcTemplate.queryForObject("""
+                select count(*)
+                from flyway_schema_history
                 where version = '2'
                   and description = 'create authentication identities'
                   and type = 'SQL'
@@ -207,6 +216,16 @@ class DatabaseMigrationTests {
                 "authentication_identities_username_key"
         );
 
+        assertThat(jdbcTemplate.queryForObject("""
+                select indexdef
+                from pg_indexes
+                where schemaname = current_schema()
+                  and tablename = 'allocation_outbox'
+                  and indexname = 'allocation_outbox_pending_publication_idx'
+                """, String.class))
+                .contains("(occurred_at, event_id)")
+                .contains("WHERE (published_at IS NULL)");
+
         assertThat(jdbcTemplate.query("""
                 select table_constraint.constraint_name,
                        key_column.table_name,
@@ -285,8 +304,8 @@ class DatabaseMigrationTests {
         assertThat(jdbcTemplate.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version in ('1', '2', '3', '4') and success
-                """, Long.class)).isEqualTo(4L);
+                where version in ('1', '2', '3', '4', '5') and success
+                """, Long.class)).isEqualTo(5L);
     }
 
     @Test
