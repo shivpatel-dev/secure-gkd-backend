@@ -7,12 +7,13 @@ audit background service. Each owns a separate PostgreSQL database.
 
 The allocation response is authoritative and synchronous. For each new Allocation,
 the allocation transaction creates the application-owned version-1
-`AllocationCreated` event intent and persists it in the `allocation_outbox` table. An
-optional background publisher now delivers committed pending intents to the existing
-`secure-gkd.allocation-created` Kafka topic. Docker Compose enables that publisher
-against its single local broker; standalone allocation runtime remains publisher-
-disabled by default. The audit service consumes version-1 events independently and
-persists downstream audit records without joining the synchronous allocation path.
+`AllocationCreated` event intent and persists it in the `allocation_outbox` table.
+When enabled, the background publisher delivers committed pending intents to the
+existing `secure-gkd.allocation-created` Kafka topic. Docker Compose enables that
+publisher against its single local broker; standalone allocation runtime remains
+publisher-disabled by default. The audit service consumes version-1 events
+independently and persists downstream audit records without joining the synchronous
+allocation path.
 
 ## Current capabilities
 
@@ -305,29 +306,18 @@ continuously running public deployment. See
 - The deployment evidence does not establish high availability, autoscaling, backup
   recovery, disaster recovery, production traffic, or general production reliability.
 
-## Consumer limitations and future direction
+## Distributed-system documentation
 
-The local broker/topic, version-1 contract, transactional outbox, asynchronous
-publisher, independent audit consumer, and audit-owned persistence are implemented.
-Pending publication survives publisher restart, and the audit consumer resumes with
-its stable Kafka group after a clean restart. The database and Kafka offset are not
-one distributed transaction. Retryable audit failures receive two one-second retries;
-invalid contracts, keys, versions, and identities bypass retries; and successfully
-recovered records retain their original key/value plus bounded origin/failure headers
-on `secure-gkd.allocation-created.dlt`. A dead-letter publish failure remains failed
-and does not advance as successful recovery. Repeated version-1 event identity remains
-harmless because the audit row is atomically inserted only when its `eventId` is not
-already protected by audit-owned PostgreSQL state. A commit followed by missing Kafka
-offset progress can still cause redelivery, but it cannot create a second audit
-effect for that identity. Automated replay remains later work, and no exactly-once
-end-to-end claim applies. The present correctness boundary remains the synchronous
-`AllocationService.allocate` transaction and its PostgreSQL constraints; Kafka and
-audit availability are not consulted while deciding allocation success. See the
-[AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) for its fields,
-semantics, compatibility rules, ownership, and sensitive-data boundary.
-The accepted boundary, transaction model, delivery assumptions, and rejected
-alternatives are recorded in
-[Architecture decision 7](docs/DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).
+[Architecture](docs/ARCHITECTURE.md) is the primary reviewer path for the implemented
+request-to-audit flow, service and database ownership, delivery and failure semantics,
+tradeoffs, deployment-evidence boundary, and links to repository evidence. The
+[AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) is authoritative
+for version-1 fields, compatibility, identity, ownership, and sensitive-data limits.
+[Architecture decision 7](docs/DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing)
+preserves why the core allocation domain remains together and why audit is the one
+asynchronous service boundary. Automated dead-letter replay is not implemented.
+Pending and published outbox rows, dead-letter records, and audit rows have no
+application-owned automatic retention or cleanup policy.
 
 ## Documentation map
 

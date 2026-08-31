@@ -12,31 +12,36 @@ implemented boundaries; it is not a claim about an always-running deployment.
 flowchart LR
     Client[HTTP client]
 
-    subgraph Allocation[Allocation service]
-        Security[Spring Security filter chain]
-        MVC[Spring MVC controllers and DTOs]
-        Services[Application services and transactions]
-        Outbox[Allocation outbox publisher]
-        Security --> MVC --> Services
+    subgraph AllocationService[Allocation service - authoritative]
+        HTTP[Spring Security and HTTP API]
+        AllocationTransaction[Synchronous allocation transaction]
+        Publisher[Asynchronous outbox publisher]
+        HTTP --> AllocationTransaction
     end
 
-    AllocationDatabase[(Allocation PostgreSQL 16)]
+    subgraph AllocationDatabase[Allocation PostgreSQL 16 - allocation owned]
+        AllocationState[(Game, GameKey, Allocation,<br/>IdempotencyRecord)]
+        TransactionalOutbox[(Transactional allocation_outbox)]
+    end
+
     Kafka[(secure-gkd.allocation-created)]
 
-    subgraph Audit[Allocation-audit service]
+    subgraph AuditService[Allocation-audit service]
         Consumer[Record-oriented Kafka listener]
-        AuditService[Audit persistence transaction]
-        Consumer --> AuditService
+        AuditTransaction[Audit persistence transaction]
+        Consumer --> AuditTransaction
     end
 
-    AuditDatabase[(Audit PostgreSQL 16)]
+    AuditDatabase[(Audit PostgreSQL 16<br/>audit owned)]
 
-    Client -->|JSON over HTTP| Security
-    Services -->|authoritative transaction| AllocationDatabase
-    AllocationDatabase -->|committed outbox intents| Outbox
-    Outbox -->|version 1 JSON keyed by event UUID| Kafka
+    Client -->|allocation request| HTTP
+    AllocationTransaction -->|atomic commit| AllocationState
+    AllocationTransaction -->|same atomic commit| TransactionalOutbox
+    AllocationTransaction -->|committed allocation response with GameKey| Client
+    TransactionalOutbox -->|committed pending intents| Publisher
+    Publisher -->|acknowledged, at-least-once publication| Kafka
     Kafka --> Consumer
-    AuditService -->|one local transaction per accepted record| AuditDatabase
+    AuditTransaction -->|one local transaction per accepted record| AuditDatabase
 ```
 
 The principal boundaries and responsibilities are:
@@ -218,6 +223,22 @@ This repository-defined contract is provider-neutral and is detailed in
 historical evidence from one temporary Render Web Service and PostgreSQL database. It
 does not define the architecture or imply that a continuously running Render
 deployment exists: those temporary resources were removed after verification.
+
+## Repository evidence
+
+The following paths connect the architectural claims above to the implemented and
+automated repository state. They are review entry points, not a claim that a
+particular local or GitHub Actions run has passed.
+
+| Claim | Repository evidence |
+| --- | --- |
+| The authoritative transaction persists Allocation, IdempotencyRecord, and event intent together | [`AllocationService`](../src/main/java/com/shiv/securegkd/allocation/AllocationService.java), the allocation [`V4` outbox migration](../src/main/resources/db/migration/V4__create_allocation_outbox.sql), and [`AllocationTransactionRollbackTests`](../src/test/java/com/shiv/securegkd/allocation/AllocationTransactionRollbackTests.java) |
+| Pending intents are published after commit and marked only after Kafka acknowledgement | [`AllocationOutboxPublisher`](../src/main/java/com/shiv/securegkd/allocation/outbox/AllocationOutboxPublisher.java), [`AllocationOutboxPublicationStatusService`](../src/main/java/com/shiv/securegkd/allocation/outbox/AllocationOutboxPublicationStatusService.java), and their focused [`publisher tests`](../src/test/java/com/shiv/securegkd/allocation/outbox/AllocationOutboxPublisherTests.java) |
+| The audit service validates transport identity, applies bounded recovery, and owns its persistence transaction | [`AllocationCreatedConsumer`](../audit-service/src/main/java/com/shiv/securegkd/audit/consumer/AllocationCreatedConsumer.java), [`KafkaConsumerConfiguration`](../audit-service/src/main/java/com/shiv/securegkd/audit/configuration/KafkaConsumerConfiguration.java), and [`AllocationAuditPersistenceService`](../audit-service/src/main/java/com/shiv/securegkd/audit/persistence/AllocationAuditPersistenceService.java) |
+| Audit idempotency is durable and database-owned | Audit [`V1`](../audit-service/src/main/resources/db/migration/V1__create_allocation_audit_schema.sql) and [`V2`](../audit-service/src/main/resources/db/migration/V2__make_source_event_id_unique.sql) migrations plus [`AuditDatabaseIntegrationTests`](../audit-service/src/test/java/com/shiv/securegkd/audit/persistence/AuditDatabaseIntegrationTests.java) |
+| The local topology uses two applications, two owned PostgreSQL databases, source and dead-letter topics, and one Kafka broker | [`compose.yaml`](../compose.yaml) |
+| The complete asynchronous path is exercised with separate JVMs, two disposable PostgreSQL containers, and a real Kafka broker | [`AllocationAuditFlowIT`](../integration-tests/src/test/java/com/shiv/securegkd/integration/AllocationAuditFlowIT.java) |
+| Pull requests run both service test/package paths and then the broker-backed integration suite | [GitHub Actions CI configuration](../.github/workflows/ci.yml) |
 
 ## Detailed references
 
