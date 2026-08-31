@@ -1,9 +1,9 @@
 # Architecture decisions
 
-This document records the major engineering decisions behind the current
-single-service backend and clearly identified target architecture. It explains why
-the boundaries matter, what they do not provide, and whether a decision is already
-implemented. For the current system structure and request flows, start with
+This document records the major engineering decisions behind the implemented
+two-service architecture. It explains why the boundaries matter and what they do not
+provide. For the current runtime structure, complete request-to-audit flow, failure
+semantics, and repository evidence, start with
 [Architecture](ARCHITECTURE.md).
 
 ## 1. Keep allocation synchronous and transactional
@@ -154,32 +154,35 @@ Identity and credential provisioning remain an external operational responsibili
 See [Security](SECURITY.md) and
 [Configuration profiles](CONFIGURATION_PROFILES.md).
 
-## 6. Keep the application container provider-neutral
+## 6. Keep the service containers provider-neutral
 
 ### Context and decision
 
-The repository `Dockerfile` defines one deployable Java 17 application-container
-artifact. Its runtime image contains the packaged Spring Boot JAR and runs it as a
-non-root user. The runtime contract stays provider-neutral: the deployment
-environment supplies the production profile, datasource configuration, JWT signing
-material, effective port routing, and other environment-specific settings.
+The root `Dockerfile` and `audit-service/Dockerfile` define separate deployable Java
+17 container artifacts for the allocation and audit services. Each runtime image
+contains only its packaged Spring Boot JAR and runs as a distinct non-root user. The
+runtime contracts stay provider-neutral: the deployment environment supplies each
+service's datasource configuration and other environment-specific settings, plus the
+allocation service's production profile, JWT signing material, and effective port
+routing and the asynchronous components' Kafka connectivity.
 
-PostgreSQL provisioning, connectivity, credentials, and operations remain deployment
-responsibilities outside the application image. Application startup runs Flyway
-migration and validation, followed by Hibernate schema validation, before the HTTP
-service is ready.
+PostgreSQL and Kafka provisioning, connectivity, credentials, and operations remain
+deployment responsibilities outside the service images. Each service runs its own
+Flyway migration and validation followed by Hibernate schema validation. The audit
+service is a background process and exposes no public HTTP API.
 
 ### Consequences and limits
 
-The same container contract can be used without embedding one provider's build or
-startup model in the repository. It does not itself provide a database, TLS, network
-topology, backups, scaling, high availability, monitoring, or secret-manager
-integration.
+The same service-image contracts can be used without embedding one provider's build
+or startup model in the repository. They do not themselves provide PostgreSQL,
+Kafka, topics, TLS, network topology, backups, scaling, high availability,
+monitoring, or secret-manager integration.
 
-Render is bounded historical verification of this contract: one temporary Web
-Service and managed PostgreSQL instance were exercised and then removed. Render is
-not an architectural dependency, and the repository does not claim that a
-continuously running Render deployment exists.
+Render is bounded historical verification of the allocation-service contract only:
+one temporary Web Service and managed PostgreSQL instance were exercised and then
+removed. The audit service and Kafka path were not part of that external exercise.
+Render is not an architectural dependency, and the repository does not claim that a
+continuously running deployment exists.
 
 See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 [Render deployment verification](DEPLOYMENT_VERIFICATION.md).
@@ -191,27 +194,11 @@ See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 **Transactional outbox, asynchronous Kafka publication, and independent audit
 consumption/persistence implemented.** Secure GKD contains the authoritative
 synchronous allocation service and one independently deployable allocation-audit
-background service. Docker Compose provides the local source and dead-letter Kafka
-topics plus a
-separate PostgreSQL 16 database for each service. The audit service consumes version-1
-JSON with the stable `secure-gkd-allocation-audit` group and persists an audit-owned
-record after validating the schema and transport identity. The existing source event
-identity is database-unique and makes duplicate consumer effects idempotent. Contract
-failures bypass retry; retryable failures receive two fixed one-second retries; and
-successful dead-letter publication recovers a poison or exhausted source record so
-later records can progress.
-
-The current allocation behavior remains authoritative. `AllocationService.allocate`
-owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation,
-IdempotencyRecord, and outbox-intent persistence, constraint enforcement, and response
-construction.
-The allocated game key continues to be returned synchronously. Kafka and downstream
-audit availability do not participate in that implemented path.
-
-The local Compose broker is a single combined broker/controller in KRaft mode with
-one-partition, replication-factor-one topic settings. Its plaintext listeners and
-single-node durability are intentionally local-development choices, not a production
-Kafka deployment.
+background service with its own PostgreSQL persistence. The allocation transaction,
+outbox publisher, Kafka transport, idempotent audit consumer, bounded retry, and
+dead-letter recovery are current repository behavior rather than a target
+architecture. [Architecture](ARCHITECTURE.md) is authoritative for the runtime flow,
+failure matrix, and implementation, migration, Compose, test, and CI evidence.
 
 ### Context and decision
 
@@ -248,64 +235,22 @@ and current-versus-future boundary are defined in the
 
 ### Transaction and communication boundaries
 
-The implemented flow preserves one authoritative synchronous transaction while
-keeping networked publication and downstream processing outside it:
+The allocation service's PostgreSQL transaction remains the sole correctness
+boundary. It atomically persists a newly created Allocation, IdempotencyRecord, and
+`AllocationCreated` outbox intent, then returns the allocated GameKey synchronously.
+Kafka publication and audit processing occur after that transaction and cannot turn
+a valid committed allocation into a failure.
 
-1. The allocation service performs the existing allocation workflow in its
-   PostgreSQL transaction. That transaction alone decides whether the allocation
-   succeeds, and its database constraints remain the final correctness boundary.
-2. The implemented outbox work persists the successful Allocation,
-   IdempotencyRecord, and intent to publish `AllocationCreated` atomically in that same
-   local transaction. If the transaction rolls back, neither the allocation state nor
-   its publish intent is committed. An idempotency replay returns the original
-   Allocation rather than creating another one, so it does not represent another
-   `AllocationCreated` fact.
-3. The caller receives the allocated key synchronously from the allocation service,
-   consistent with the service's committed database state. Kafka or audit-service
-   availability must not determine whether an otherwise valid allocation succeeds.
-4. A separate outbox publisher publishes committed intents to Kafka outside the
-   synchronous allocation transaction. It polls a bounded deterministic batch,
-   sends the persisted JSON keyed by the event UUID, waits for acknowledgement, and
-   records publication status in a separate transaction.
-5. The allocation-audit service consumes and persists audit results in its own
-   transaction, also outside the synchronous allocation transaction.
-
-Once an allocation commits, publisher, Kafka, delivery, consumer, or audit-persistence
-failures must not invalidate it. Later recovery work must resume downstream processing
-instead of reversing the authoritative allocation.
-
-### Consistency, delivery, and failure assumptions
-
-The synchronous allocation response is consistent with the allocation service's
-committed PostgreSQL state. Audit state is eventually consistent and may lag while
-publication or processing recovers. The design assumes publication or delivery can
-occur more than once. The consumer retains source `eventId` and uses audit-owned
-PostgreSQL uniqueness plus an atomic insert-or-ignore operation to produce at most
-one audit effect for that logical identity. An uncertain database/offset boundary can
-still redeliver the event, but the repeated delivery completes successfully without
-changing the original audit row. This is not an exactly-once end-to-end claim.
-
-Expected failure conditions include:
-
-| Condition | Architectural consequence |
-| --- | --- |
-| Kafka is temporarily unavailable after allocation commits | The committed outbox intent remains available for a later publication attempt; the allocation remains valid. |
-| The outbox publisher fails or restarts | It resumes from committed outbox state. An uncertain attempt can lead to duplicate publication. |
-| An event is published or delivered more than once | The audit consumer uses the retained source `eventId` to recognize the database-protected duplicate and completes without a second audit effect. |
-| The audit consumer is unavailable | Audit state falls behind the allocation service's authoritative state until consumption can resume; the allocation remains valid. |
-| Event contract, Kafka key, or key/payload identity is invalid | The non-retryable record is published immediately to `secure-gkd.allocation-created.dlt`; successful recovery allows later records to progress. |
-| Audit persistence or another retryable dependency fails | The record receives at most two retries at a fixed one-second delay, then is published to the dead-letter topic. It does not roll back or invalidate the allocation. |
-| Dead-letter publication fails | Recovery remains failed and source progress is not treated as successful; bounded logs expose the failure for intervention. |
-
-The periodic polling cycle retries publisher failures. A selected batch is processed
-sequentially and stops at the first unsuccessful event. This supplies deterministic
-best-effort order in the current single-publisher, single-partition local environment,
-not a distributed ordering guarantee. The consumer uses disabled auto-commit,
-`earliest` initial offsets, record acknowledgement, explicit non-retryable contract
-classification, and a bounded two-retry fixed-backoff handler. Successful recovery
-publishes the original record to the deliberately provisioned dead-letter topic and
-allows progress; failed recovery does not advance. This policy does not make the audit
-database commit and Kafka offset atomic and does not provide exactly-once delivery.
+The allocation and audit transactions are separate local transactions, and Kafka
+offset progress is separate again. Publication and delivery are therefore
+at-least-once: acknowledged publication can be repeated when status recording is
+uncertain, and audit persistence can be redelivered when offset progress is
+uncertain. Audit-owned uniqueness on the stable `eventId` makes the repeated audit
+effect a successful no-op, but that idempotency is not an exactly-once distributed
+transaction. Audit state is eventually consistent. The complete recovery behavior,
+including non-retryable contract failures, bounded retryable failures, dead-letter
+publication, and dead-letter publication failure, is consolidated in
+[Architecture](ARCHITECTURE.md#allocation-event-contract-outbox-persistence-and-publication).
 
 ### Why use a transactional outbox
 
@@ -323,7 +268,7 @@ publisher delivers committed pending intents to Kafka and records `published_at`
 only after producer acknowledgement. This avoids losing the intent
 across the database/Kafka boundary while keeping Kafka outside the allocation
 transaction. It still permits duplicate publication and delivery. The audit
-consumer's database-backed idempotent effect now makes those duplicates harmless for
+consumer's database-backed idempotent effect makes those duplicates harmless for
 one logical source event, but PostgreSQL commit and Kafka offset progress remain
 separate operations and do not provide exactly-once end-to-end delivery.
 
@@ -342,4 +287,8 @@ The tradeoff is accepting Kafka and another deployable service, eventual audit
 consistency, duplicate-delivery handling, and additional operations. That cost is
 justified only because audit processing can evolve and recover independently while
 the allocation service remains authoritative and synchronous; it is not a general
-decision to decompose the existing domain into microservices.
+decision to decompose the existing domain into microservices. The Compose broker's
+single-node, plaintext, replication-factor-one topology is local-development
+infrastructure, not evidence of a production Kafka deployment. Automated dead-letter
+replay is not implemented. Pending and published outbox rows, dead-letter records,
+and audit rows have no application-owned automatic retention or cleanup policy.
