@@ -83,8 +83,18 @@ services:
         --replication-factor 1
         && /opt/kafka/bin/kafka-topics.sh
         --bootstrap-server kafka:9092
+        --create --if-not-exists
+        --topic secure-gkd.allocation-created.dlt
+        --partitions 1
+        --replication-factor 1
+        && /opt/kafka/bin/kafka-topics.sh
+        --bootstrap-server kafka:9092
         --describe
         --topic secure-gkd.allocation-created
+        && /opt/kafka/bin/kafka-topics.sh
+        --bootstrap-server kafka:9092
+        --describe
+        --topic secure-gkd.allocation-created.dlt
     restart: "no"
 
   application:
@@ -124,6 +134,7 @@ services:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       AUDIT_KAFKA_TOPIC: secure-gkd.allocation-created
       AUDIT_KAFKA_CONSUMER_GROUP: secure-gkd-allocation-audit
+      AUDIT_KAFKA_DEAD_LETTER_TOPIC: secure-gkd.allocation-created.dlt
 
 volumes:
   postgres-data:

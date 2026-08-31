@@ -91,11 +91,11 @@ Port `29092` is published only on the host's IPv4 loopback interface at
 The broker health check requests Kafka topic metadata, so a merely running container
 process is not considered ready. After the broker becomes healthy, the one-shot
 `kafka-topic-init` service idempotently ensures that
-`secure-gkd.allocation-created` exists with one partition and replication factor one,
-then describes it and exits. Broker-side automatic topic creation is disabled so this
-explicit initialization remains authoritative. This topic is transport infrastructure
-only: it does not define the `AllocationCreated` payload, schema, or compatibility
-contract.
+`secure-gkd.allocation-created` and `secure-gkd.allocation-created.dlt` each exist with
+one partition and replication factor one, then describes both and exits. Broker-side
+automatic topic creation is disabled so this explicit initialization remains
+authoritative. These topics are transport infrastructure only: they do not redefine
+the `AllocationCreated` payload, schema, or compatibility contract.
 
 The application still depends only on healthy PostgreSQL. It shares the Compose
 network with Kafka and Compose enables its optional outbox publisher using
@@ -138,6 +138,7 @@ to verify the topic and its local partition and replication settings:
 ```sh
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic secure-gkd.allocation-created
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic secure-gkd.allocation-created.dlt
 ```
 
 The description should report `PartitionCount: 1`, `ReplicationFactor: 1`, and one
@@ -226,6 +227,61 @@ docker compose start audit-service
 docker compose logs --tail 100 audit-service
 ```
 
+## Verify dead-letter recovery and continued progress
+
+Publish one deliberately malformed, non-secret record. Its key is syntactically valid
+so the failure reason is the malformed event contract rather than transport identity:
+
+```sh
+printf '%s\n' '218f47a2-5d91-7d37-a7f8-4d781f28b983|{not-json' \
+  | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
+      --bootstrap-server kafka:9092 \
+      --topic secure-gkd.allocation-created \
+      --property parse.key=true \
+      --property key.separator='|'
+```
+
+Inspect one bounded dead-letter record, including its broker-visible headers:
+
+```sh
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:9092 \
+  --topic secure-gkd.allocation-created.dlt \
+  --from-beginning \
+  --max-messages 1 \
+  --property print.key=true \
+  --property print.headers=true \
+  --property key.separator=' | '
+```
+
+The dead-letter record retains key `218f47a2-5d91-7d37-a7f8-4d781f28b983` and value
+`{not-json`. Its headers identify the source topic, partition, offset, failure class,
+and safe `INVALID_EVENT_CONTRACT` reason without adding event payload fields or
+application secrets. Recent audit logs should show poison-message classification and
+successful dead-letter recovery without a retry sequence or complete payload.
+
+Next publish a valid synthetic event with a new matching key and payload `eventId`,
+then query `allocation_audit_record` as above. The new row demonstrates that the poison
+record did not stop progress:
+
+```sh
+printf '%s\n' '318f47a2-5d91-7d37-a7f8-4d781f28b983|{"eventId":"318f47a2-5d91-7d37-a7f8-4d781f28b983","schemaVersion":1,"occurredAt":"2026-08-30T09:12:11Z","allocationId":43,"allocatedAt":"2026-08-30T09:12:10Z","gameId":8,"gameCode":"DEMO-GAME-2","requestId":"e49f5ba7-53ee-4c8b-95af-29e75831176a"}' \
+  | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh \
+      --bootstrap-server kafka:9092 \
+      --topic secure-gkd.allocation-created \
+      --property parse.key=true \
+      --property key.separator='|'
+```
+
+Dead-letter recovery is deliberately manual. An operator should inspect the original
+record and its origin/failure headers, determine and correct the contract or
+infrastructure cause, and republish only a corrected or now-recoverable event to
+`secure-gkd.allocation-created` with the Kafka key matching payload `eventId`. Do not
+blindly republish an unchanged poison record. If the logical event may already have
+committed its audit effect before Kafka progress became uncertain, the existing unique
+`source_event_id` rule makes the deliberate redelivery a successful no-op. No
+automated replay service or administrative API is provided.
+
 To verify allocation independence, stop the audit service and confirm the allocation
 application remains healthy:
 
@@ -241,7 +297,8 @@ transaction. A failure after audit commit but before Kafka offset progress can s
 cause redelivery; audit-owned source-event uniqueness makes that delivery a
 successful no-op rather than a second audit effect. Kafka publication and delivery
 remain at-least-once. Application-owned retry/backoff, dead-letter handling, and
-poison-message recovery remain later work.
+poison-message recovery are bounded as described above; automated dead-letter replay
+remains later work.
 
 If startup or a check does not complete, inspect bounded recent logs rather than
 exposing the rendered Compose configuration:

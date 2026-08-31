@@ -71,8 +71,22 @@ class AllocationCreatedConsumerTests {
     @Test
     void rejectsMalformedJsonWithoutPersistence() {
         assertThatThrownBy(() -> consumer.consume(record(EVENT_ID, "{not-json")))
-                .isInstanceOf(AllocationAuditProcessingException.class)
-                .hasMessage("Allocation audit event processing failed");
+                .isInstanceOf(NonRetryableAllocationAuditException.class)
+                .hasMessage("AllocationCreated event contract is invalid")
+                .extracting("reason")
+                .isEqualTo(NonRetryableAllocationAuditException.Reason.INVALID_EVENT_CONTRACT);
+
+        verify(persistenceService, never()).persist(any());
+    }
+
+    @Test
+    void rejectsInvalidKafkaEventKeyWithoutPersistence() {
+        assertThatThrownBy(() -> consumer.consume(record("not-a-uuid", validJson())))
+                .isInstanceOf(NonRetryableAllocationAuditException.class)
+                .hasMessage("Kafka key is not a valid event UUID")
+                .hasCauseInstanceOf(IllegalArgumentException.class)
+                .extracting("reason")
+                .isEqualTo(NonRetryableAllocationAuditException.Reason.INVALID_KAFKA_EVENT_KEY);
 
         verify(persistenceService, never()).persist(any());
     }
@@ -82,7 +96,23 @@ class AllocationCreatedConsumerTests {
         String unsupported = validJson().replace("\"schemaVersion\": 1", "\"schemaVersion\": 2");
 
         assertThatThrownBy(() -> consumer.consume(record(EVENT_ID, unsupported)))
-                .isInstanceOf(AllocationAuditProcessingException.class);
+                .isInstanceOf(NonRetryableAllocationAuditException.class)
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .extracting("reason")
+                .isEqualTo(NonRetryableAllocationAuditException.Reason.INVALID_EVENT_CONTRACT);
+
+        verify(persistenceService, never()).persist(any());
+    }
+
+    @Test
+    void rejectsOtherEventContractValidationWithoutPersistence() {
+        String invalid = validJson().replace("\"allocationId\": 42", "\"allocationId\": 0");
+
+        assertThatThrownBy(() -> consumer.consume(record(EVENT_ID, invalid)))
+                .isInstanceOf(NonRetryableAllocationAuditException.class)
+                .hasRootCauseInstanceOf(IllegalArgumentException.class)
+                .extracting("reason")
+                .isEqualTo(NonRetryableAllocationAuditException.Reason.INVALID_EVENT_CONTRACT);
 
         verify(persistenceService, never()).persist(any());
     }
@@ -92,24 +122,24 @@ class AllocationCreatedConsumerTests {
         assertThatThrownBy(() -> consumer.consume(record(
                 UUID.fromString("128f47a2-5d91-7d37-a7f8-4d781f28b983").toString(),
                 validJson()
-        ))).isInstanceOf(AllocationAuditProcessingException.class);
+        ))).isInstanceOf(NonRetryableAllocationAuditException.class)
+                .hasMessage("Kafka key does not match payload eventId")
+                .extracting("reason")
+                .isEqualTo(NonRetryableAllocationAuditException.Reason.EVENT_IDENTITY_MISMATCH);
 
         verify(persistenceService, never()).persist(any());
     }
 
     @Test
-    void surfacesAuditPersistenceFailure(CapturedOutput output) {
+    void surfacesAuditPersistenceFailureWithItsCause() {
         doThrow(new IllegalStateException("database unavailable"))
                 .when(persistenceService)
                 .persist(any(AllocationCreated.class));
 
         assertThatThrownBy(() -> consumer.consume(record(EVENT_ID, validJson())))
-                .isInstanceOf(AllocationAuditProcessingException.class);
-
-        assertThat(output).contains("allocation_audit_processing_failed")
-                .contains("failureType=IllegalStateException")
-                .doesNotContain("database unavailable")
-                .doesNotContain("DEMO-GAME");
+                .isExactlyInstanceOf(AllocationAuditProcessingException.class)
+                .hasMessage("Allocation audit persistence failed")
+                .hasCauseInstanceOf(IllegalStateException.class);
     }
 
     private ConsumerRecord<String, String> record(String key, String value) {

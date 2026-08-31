@@ -191,13 +191,15 @@ See [Deployment runtime](DEPLOYMENT_RUNTIME.md) and
 **Transactional outbox, asynchronous Kafka publication, and independent audit
 consumption/persistence implemented.** Secure GKD contains the authoritative
 synchronous allocation service and one independently deployable allocation-audit
-background service. Docker Compose provides the existing local Kafka topic plus a
+background service. Docker Compose provides the local source and dead-letter Kafka
+topics plus a
 separate PostgreSQL 16 database for each service. The audit service consumes version-1
 JSON with the stable `secure-gkd-allocation-audit` group and persists an audit-owned
 record after validating the schema and transport identity. The existing source event
-identity is database-unique and makes duplicate consumer effects idempotent.
-Application-owned retry/backoff/dead-letter and poison-message recovery are not
-implemented.
+identity is database-unique and makes duplicate consumer effects idempotent. Contract
+failures bypass retry; retryable failures receive two fixed one-second retries; and
+successful dead-letter publication recovers a poison or exhausted source record so
+later records can progress.
 
 The current allocation behavior remains authoritative. `AllocationService.allocate`
 owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation,
@@ -291,15 +293,19 @@ Expected failure conditions include:
 | The outbox publisher fails or restarts | It resumes from committed outbox state. An uncertain attempt can lead to duplicate publication. |
 | An event is published or delivered more than once | The audit consumer uses the retained source `eventId` to recognize the database-protected duplicate and completes without a second audit effect. |
 | The audit consumer is unavailable | Audit state falls behind the allocation service's authoritative state until consumption can resume; the allocation remains valid. |
-| Audit processing or audit persistence fails | The listener does not acknowledge successful processing; the baseline stops the listener container and requires restart after intervention. It does not roll back or invalidate the allocation. |
+| Event contract, Kafka key, or key/payload identity is invalid | The non-retryable record is published immediately to `secure-gkd.allocation-created.dlt`; successful recovery allows later records to progress. |
+| Audit persistence or another retryable dependency fails | The record receives at most two retries at a fixed one-second delay, then is published to the dead-letter topic. It does not roll back or invalidate the allocation. |
+| Dead-letter publication fails | Recovery remains failed and source progress is not treated as successful; bounded logs expose the failure for intervention. |
 
 The periodic polling cycle retries publisher failures. A selected batch is processed
 sequentially and stops at the first unsuccessful event. This supplies deterministic
 best-effort order in the current single-publisher, single-partition local environment,
 not a distributed ordering guarantee. The consumer uses disabled auto-commit,
-`earliest` initial offsets, record acknowledgement, and a container-stopping error
-handler. Consumer retry classification/timing, backoff, poison-message handling, and
-dead-letter policy are deliberately deferred rather than implied by this decision.
+`earliest` initial offsets, record acknowledgement, explicit non-retryable contract
+classification, and a bounded two-retry fixed-backoff handler. Successful recovery
+publishes the original record to the deliberately provisioned dead-letter topic and
+allows progress; failed recovery does not advance. This policy does not make the audit
+database commit and Kafka offset atomic and does not provide exactly-once delivery.
 
 ### Why use a transactional outbox
 

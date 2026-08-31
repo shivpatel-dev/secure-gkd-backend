@@ -162,13 +162,17 @@ the event; audit-owned uniqueness prevents that redelivery from creating another
 audit effect. This is an idempotent consumer effect, not exactly-once end-to-end
 delivery.
 
-Malformed JSON, unsupported versions, inconsistent message identity, and persistence
-failures leave listener processing failed. The baseline container stops on such a
-record and requires operator restart after the underlying condition is addressed; it
-does not define application-owned retry/backoff, dead-letter, or poison-message
-recovery. Intentionally ignored duplicates complete successfully and do not block
-Kafka progress. Newly persisted, duplicate, and failed outcomes use distinct bounded
-non-secret logs. The exact contract and limitations are in the
+Malformed JSON, invalid Kafka keys, unsupported versions, key/payload identity
+mismatches, and other event-contract validation failures are non-retryable. They are
+published immediately to `secure-gkd.allocation-created.dlt`. Persistence and other
+retryable infrastructure failures receive no more than two retries after the initial
+attempt, with a fixed one-second delay, before dead-letter recovery. Dead-letter
+records retain the original key/value and bounded broker-visible origin, failure-type,
+and failure-reason headers. Successful publication recovers the source record so later
+records can progress; failed dead-letter publication remains a failed recovery and
+does not advance silently. Intentionally ignored duplicates complete successfully.
+Persisted, duplicate, retry, exhaustion, poison, and recovery outcomes use distinct
+bounded non-secret logs. The exact contract and limitations are in the
 [AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
 
 ## Authentication and authorization
@@ -202,11 +206,11 @@ ready. `GET /api/health` is the current public HTTP/application health endpoint.
 controller returns application status without independently querying PostgreSQL, so
 it is not a database-readiness check.
 
-The audit service receives its own datasource settings plus Kafka bootstrap, topic,
-and group configuration. Normal Spring shutdown closes its listener container,
-consumer, datasource, and JPA resources. The allocation service has no dependency on
-the audit container or audit database and remains startable and healthy while the
-audit service is stopped.
+The audit service receives its own datasource settings plus Kafka bootstrap, source
+topic, dead-letter topic, group, retry-count, and backoff configuration. Normal Spring
+shutdown closes its listener container, consumer, producer, datasource, and JPA
+resources. The allocation service has no dependency on the audit container or audit
+database and remains startable and healthy while the audit service is stopped.
 
 This repository-defined contract is provider-neutral and is detailed in
 [Deployment runtime](DEPLOYMENT_RUNTIME.md). The separate

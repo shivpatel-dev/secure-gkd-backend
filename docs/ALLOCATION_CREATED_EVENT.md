@@ -123,12 +123,17 @@ the durable uniqueness rule makes that redelivery a no-op rather than a second a
 effect. Kafka publication and delivery therefore remain at-least-once, and this is
 not an exactly-once end-to-end guarantee.
 
-Application-owned retry classification, retry limits/backoff, dead-letter topics,
-and poison-message recovery are not implemented. Malformed JSON, unsupported
-versions, key/payload mismatches, and genuine persistence failures stop listener
-processing and are logged with bounded metadata rather than the complete payload.
-Newly persisted, intentionally ignored duplicate, and failed outcomes have distinct
-bounded log events. Pending and published outbox rows and audit rows have no
-automatic retention or cleanup policy. Later work must preserve the synchronous and
-PostgreSQL-backed correctness boundary described in
+Malformed JSON, invalid Kafka keys, unsupported versions, key/payload mismatches, and
+other contract validation failures are non-retryable and go directly to
+`secure-gkd.allocation-created.dlt`. Retryable persistence or infrastructure failures
+receive two retry attempts after the initial attempt, separated by a fixed one-second
+delay, before the same dead-letter path. The dead-letter record retains the original
+key/value and bounded origin/failure headers; it does not alter or enrich the
+version-1 payload with recovery data or application secrets. Successful dead-letter
+publication allows later source records to progress, while a publication failure
+remains failed. Newly persisted, duplicate, retry, exhaustion, poison, and recovery
+outcomes have distinct bounded logs that omit complete payloads. Automated replay is
+not implemented. Pending and published outbox rows, dead-letter records, and audit
+rows have no application-owned automatic retention or cleanup policy. Later work
+must preserve the synchronous and PostgreSQL-backed correctness boundary described in
 [Architecture decision 7](DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).
