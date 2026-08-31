@@ -58,9 +58,11 @@ The audit application has no public HTTP API. It consumes string-keyed JSON from
 `secure-gkd.allocation-created` with group `secure-gkd-allocation-audit`, starts a new
 group at `earliest`, disables auto-commit, validates schema version 1 and matching
 event UUIDs, and persists each accepted record in one audit database transaction.
-PostgreSQL uniqueness on the retained source event UUID makes a repeated logical
-event a successful no-op while preserving the original audit record. Audit state is
-eventually consistent and does not affect allocation success.
+Contract failures go directly to `secure-gkd.allocation-created.dlt`; retryable
+failures receive at most two retries with a fixed one-second delay before the same
+recovery path. PostgreSQL uniqueness on the retained source event UUID makes a
+repeated logical event a successful no-op while preserving the original audit
+record. Audit state is eventually consistent and does not affect allocation success.
 
 Flyway creates and evolves the normal schema at startup. Hibernate is configured with
 `ddl-auto: validate`, so it validates the migrated schema rather than creating or
@@ -127,7 +129,7 @@ Host Java, Maven, PostgreSQL, and Kafka installations are not required.
    independently query PostgreSQL, Kafka, or audit state. Both databases and Kafka
    should report healthy, both applications should be running, and the one-shot
    `kafka-topic-init` service should exit successfully after ensuring that
-   `secure-gkd.allocation-created` exists.
+   `secure-gkd.allocation-created` and `secure-gkd.allocation-created.dlt` exist.
 
 Compose-network Kafka clients use `kafka:9092`; host-side development tools use
 `localhost:29092`, which is published only on the IPv4 loopback interface. Both
@@ -156,6 +158,9 @@ datasource-password or JWT-signing-key fallbacks.
 | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka address; Compose supplies `kafka:9092` to both asynchronous components. |
 | `AUDIT_KAFKA_TOPIC` | Audit topic; defaults to `secure-gkd.allocation-created`. |
 | `AUDIT_KAFKA_CONSUMER_GROUP` | Stable audit group; defaults to `secure-gkd-allocation-audit`. |
+| `AUDIT_KAFKA_DEAD_LETTER_TOPIC` | Audit dead-letter topic; defaults to `secure-gkd.allocation-created.dlt`. |
+| `AUDIT_KAFKA_RETRY_ATTEMPTS` | Retry attempts after the initial retryable failure; defaults to `2`. |
+| `AUDIT_KAFKA_RETRY_BACKOFF` | Fixed delay between retryable attempts; defaults to `1s`. |
 | `JWT_ACCESS_TOKEN_LIFETIME` | Optional whole-second duration from one second through 24 hours; defaults to `PT15M`. |
 | `SPRING_PROFILES_ACTIVE` | Selects the environment profile; `local` is the application default and deployments should select `prod`. |
 
@@ -279,9 +284,10 @@ continuously running public deployment. See
   `eventId` and audit-owned PostgreSQL uniqueness to suppress repeated audit effects,
   but the database transaction and Kafka offset are not one distributed transaction.
   There is no exactly-once end-to-end guarantee.
-- The audit consumer has no application-owned retry classification/backoff, dead-letter
-  topic, or poison-message recovery. A failed record stops the baseline listener for
-  operator intervention and restart.
+- The audit consumer retries retryable processing failures twice with a fixed
+  one-second delay, then publishes the original record to its dead-letter topic.
+  Contract/key failures bypass retry. Automated dead-letter replay is not provided;
+  operators inspect and deliberately republish corrected records when appropriate.
 - The deployment evidence does not establish high availability, autoscaling, backup
   recovery, disaster recovery, production traffic, or general production reliability.
 
@@ -291,12 +297,15 @@ The local broker/topic, version-1 contract, transactional outbox, asynchronous
 publisher, independent audit consumer, and audit-owned persistence are implemented.
 Pending publication survives publisher restart, and the audit consumer resumes with
 its stable Kafka group after a clean restart. The database and Kafka offset are not
-one distributed transaction. The audit consumer now makes repeated version-1 event
-identity harmless by atomically inserting the audit row only when its `eventId` is
-not already protected by audit-owned PostgreSQL state. A commit followed by missing
-Kafka offset progress can still cause redelivery, but it cannot create a second audit
-effect for that identity. Application-owned retry classification/backoff,
-dead-letter handling, and poison-message recovery remain later work; no exactly-once
+one distributed transaction. Retryable audit failures receive two one-second retries;
+invalid contracts, keys, versions, and identities bypass retries; and successfully
+recovered records retain their original key/value plus bounded origin/failure headers
+on `secure-gkd.allocation-created.dlt`. A dead-letter publish failure remains failed
+and does not advance as successful recovery. Repeated version-1 event identity remains
+harmless because the audit row is atomically inserted only when its `eventId` is not
+already protected by audit-owned PostgreSQL state. A commit followed by missing Kafka
+offset progress can still cause redelivery, but it cannot create a second audit
+effect for that identity. Automated replay remains later work, and no exactly-once
 end-to-end claim applies. The present correctness boundary remains the synchronous
 `AllocationService.allocate` transaction and its PostgreSQL constraints; Kafka and
 audit availability are not consulted while deciding allocation success. See the

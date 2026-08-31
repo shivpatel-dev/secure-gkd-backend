@@ -81,9 +81,13 @@ Hibernate validation. Its external boundary is:
 | `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092`; Compose uses `kafka:9092`. |
 | `AUDIT_KAFKA_TOPIC` | `secure-gkd.allocation-created`. |
 | `AUDIT_KAFKA_CONSUMER_GROUP` | `secure-gkd-allocation-audit`. |
+| `AUDIT_KAFKA_DEAD_LETTER_TOPIC` | `secure-gkd.allocation-created.dlt`. |
+| `AUDIT_KAFKA_RETRY_ATTEMPTS` | `2`; retries after the initial retryable attempt. |
+| `AUDIT_KAFKA_RETRY_BACKOFF` | `1s`; fixed delay between retryable attempts. |
 
 The consumer uses string keys/values, disabled auto-commit, `earliest` initial offset
-behavior, and record acknowledgement. Tests disable listener startup. Compose and
-direct-host execution default to port `55432`; CI explicitly maps its separate audit
-PostgreSQL 16 service to port `5433`. Kafka is not a CI service for these focused
-tests. Neither service receives the other service's datasource URL or credentials.
+behavior, record acknowledgement, and string serialization for original-record
+dead-letter publication. Tests disable listener startup. Compose and direct-host
+execution default to port `55432`; CI explicitly maps its separate audit PostgreSQL 16
+service to port `5433`. Kafka is not a CI service for these focused tests. Neither
+service receives the other service's datasource URL or credentials.

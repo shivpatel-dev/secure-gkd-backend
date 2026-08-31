@@ -34,6 +34,9 @@ spring:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
     listener:
       ack-mode: record
 
@@ -45,3 +48,6 @@ secure-gkd:
     consumer:
       topic: ${AUDIT_KAFKA_TOPIC:secure-gkd.allocation-created}
       group: ${AUDIT_KAFKA_CONSUMER_GROUP:secure-gkd-allocation-audit}
+      dead-letter-topic: ${AUDIT_KAFKA_DEAD_LETTER_TOPIC:secure-gkd.allocation-created.dlt}
+      retry-attempts: ${AUDIT_KAFKA_RETRY_ATTEMPTS:2}
+      retry-backoff: ${AUDIT_KAFKA_RETRY_BACKOFF:1s}
