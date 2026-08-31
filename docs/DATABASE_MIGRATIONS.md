@@ -1,10 +1,13 @@
 # Database migrations
 
-Flyway owns the PostgreSQL schema used by the application. Versioned SQL migrations
-live in `src/main/resources/db/migration` and use Flyway's `V<version>__<description>.sql`
-naming convention. Spring Boot runs pending migrations during startup before
-Hibernate validates the entity mappings. Hibernate does not create, update, or drop
-the normal application schema.
+Each service owns its PostgreSQL schema through its own Flyway history. Allocation
+service migrations live in `src/main/resources/db/migration`; audit-service migrations
+live in `audit-service/src/main/resources/db/migration`. Both use Flyway's
+`V<version>__<description>.sql` naming convention. Each Spring Boot application runs
+only its own pending migrations before Hibernate validates its own entity mappings.
+Hibernate does not create, update, or drop either normal schema.
+
+## Allocation-service migration history
 
 `V1__create_initial_schema.sql` is the baseline for the `games`, `game_keys`,
 `allocations`, and `idempotency_records` model.
@@ -22,6 +25,17 @@ clean database is initialized by starting the application with a database user t
 required objects; Flyway creates its schema-history table, applies pending versions
 in order, and records each successful migration. Starting the application again
 validates the recorded migrations and does not reapply them.
+
+## Audit-service migration history
+
+The audit service has an independent version sequence and an independent
+`flyway_schema_history` table in the `secure_gkd_audit` database.
+`V1__create_allocation_audit_schema.sql` creates `allocation_audit_record` with a
+service-owned UUID primary key and the source event identity, version, timestamps,
+Allocation and Game identifiers, non-secret Game code, request correlation, and audit
+persistence timestamp. Source Allocation and Game IDs are plain values: the migration
+creates no foreign keys to the allocation database. `source_event_id` is deliberately
+not unique because consumer-side duplicate suppression is later work.
 
 Do not edit a migration after it has been applied. Every future schema change must be
 represented by a new migration with the next version. Review migrations together
@@ -51,5 +65,8 @@ Never enable `baseline-on-migrate` globally or baseline a schema that has not fi
 been verified. A schema that differs from `V1` requires a separately reviewed data or
 schema adoption plan rather than an automatic baseline.
 
-PostgreSQL-backed tests retain the configured datasource and use these same versioned
-migrations. They do not maintain a competing Hibernate-generated test schema.
+PostgreSQL-backed tests retain each service's configured datasource and use that
+service's versioned migrations. CI runs the allocation tests against
+`secure_gkd` on its PostgreSQL 16 service and the audit tests against the separate
+`secure_gkd_audit` PostgreSQL 16 service. Neither test path maintains a competing
+Hibernate-generated schema or reuses the other application's tables.

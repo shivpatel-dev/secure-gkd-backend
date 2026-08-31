@@ -1,7 +1,7 @@
 # Configuration profiles
 
-The backend separates shared persistence behavior from environment-specific database
-connection values with standard Spring Boot profiles.
+The allocation service separates shared persistence behavior from environment-specific
+database connection values with standard Spring Boot profiles.
 
 | Profile | Responsibility | Datasource configuration |
 | --- | --- | --- |
@@ -63,4 +63,27 @@ second request timeout, a five second metadata/send blocking bound, and a ten se
 delivery timeout. The publisher waits for producer acknowledgement before recording
 `published_at`. Failures remain pending for scheduled retry, and acknowledged events
 can still be duplicated if the separate database status update does not commit. No
-exactly-once, consumer, or downstream-processing guarantee is implied.
+exactly-once or downstream-processing success guarantee is implied.
+
+## Allocation-audit service configuration
+
+The standalone `audit-service/` application has no HTTP profile or allocation-service
+configuration dependency. It always uses its own datasource, Flyway history, and
+Hibernate validation. Its external boundary is:
+
+| Variable | Default and boundary |
+| --- | --- |
+| `AUDIT_DATASOURCE_URL` | Defaults to `jdbc:postgresql://localhost:${AUDIT_DATABASE_HOST_PORT}/secure_gkd_audit`; Compose overrides it with the audit database hostname and container port. |
+| `AUDIT_DATASOURCE_USERNAME` | `secure_gkd_audit_user`; non-secret local identity. |
+| `AUDIT_DATASOURCE_PASSWORD` | Required with no fallback. Keep it in untracked environment configuration. |
+| `AUDIT_DATABASE_HOST_PORT` | Loopback host port used by Compose and the default direct-host JDBC URL; defaults to `55432`. It does not change PostgreSQL's container port `5432`. |
+| `AUDIT_DATABASE_SCHEMA` | Optional schema name; defaults to `public`. CI and Compose use a separate audit database, while a non-public value can isolate a local test schema. |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | `localhost:29092`; Compose uses `kafka:9092`. |
+| `AUDIT_KAFKA_TOPIC` | `secure-gkd.allocation-created`. |
+| `AUDIT_KAFKA_CONSUMER_GROUP` | `secure-gkd-allocation-audit`. |
+
+The consumer uses string keys/values, disabled auto-commit, `earliest` initial offset
+behavior, and record acknowledgement. Tests disable listener startup. Compose and
+direct-host execution default to port `55432`; CI explicitly maps its separate audit
+PostgreSQL 16 service to port `5433`. Kafka is not a CI service for these focused
+tests. Neither service receives the other service's datasource URL or credentials.

@@ -10,8 +10,10 @@ For each newly created Allocation, the synchronous allocation transaction create
 version-1 event, serializes it to JSON, and persists its publication intent in the
 allocation service's `allocation_outbox` table. An idempotent replay creates no event
 or outbox row. An optional background publisher sends committed pending rows to
-Kafka after allocation commits. There is no Kafka consumer, allocation-audit service,
-audit persistence, or distributed end-to-end event processing.
+Kafka after allocation commits. The independent allocation-audit service consumes
+that published contract and persists a downstream audit fact in its own PostgreSQL
+database. The services share neither application tables nor Java implementation
+types.
 
 ## Version 1 fields
 
@@ -60,9 +62,10 @@ Allocation. Returning an already-existing Allocation for an idempotent replay do
 not represent another `AllocationCreated` event.
 
 The Allocation and its PostgreSQL-backed transaction remain authoritative for
-allocation correctness. Kafka availability and future audit processing do not decide
-whether synchronous allocation succeeds. Publication may be duplicated, and this
-contract does not imply exactly-once end-to-end delivery.
+allocation correctness. Kafka and audit processing do not decide whether synchronous
+allocation succeeds. Audit state is eventually consistent and may lag the allocation
+state. Publication or delivery may be duplicated, and this contract does not imply
+exactly-once or effectively-once end-to-end processing.
 
 The outbox row stores the same `eventId`, schema version, and `occurredAt` as the JSON
 payload, references the authoritative Allocation, and starts with `published_at` set
@@ -90,9 +93,12 @@ Avro, or Protobuf boundary.
 ## Ownership, transport, and sensitive data
 
 The allocation service owns the contract, event-intent creation, and publication.
-`secure-gkd.allocation-created` is the Kafka transport. A later
-allocation-audit service will consume the contract and own only the audit records it
-derives; it will not own or redefine allocation semantics.
+`secure-gkd.allocation-created` is the Kafka transport. The allocation-audit service
+owns only the audit records it derives; it does not own or redefine allocation
+semantics and does not access allocation-service tables. Its consumer-owned Java
+record explicitly supports schema version 1 and ignores compatible unknown JSON
+properties. It accepts a record only when the string Kafka key parses as the same UUID
+as payload `eventId`.
 
 Version 1 contains no GameKey code or other secret game-key value. It also contains
 no serialized GameKey, Allocation, Game, or other JPA entity; allocation idempotency
@@ -100,14 +106,22 @@ key; username or password material; Bearer token; JWT contents or signing materi
 datasource credentials; arbitrary request payload; or arbitrary request header.
 `AllocationResponse` is not reused because its `keyCode` is the allocated secret.
 
-Transactional-outbox persistence, event creation, asynchronous Kafka publication,
-and restart recovery from committed pending state are implemented. Failed or timed
-out sends remain pending for a later polling cycle. If Kafka accepts a message but
-the application fails before recording `published_at`, the same stable event key and
-payload can be published again. This intentional at-least-once boundary is not an
-exactly-once claim. Allocation-audit consumption and persistence, consumer
-idempotency, consumer retry, and dead-letter handling remain future work. Pending and
-published rows are retained; no automatic cleanup, deletion, archival, or production
-retention period exists. Later work must preserve the synchronous and
-PostgreSQL-backed correctness boundary described in
+Transactional-outbox persistence, asynchronous publication, audit consumption, and
+audit-owned persistence are implemented. The audit group is
+`secure-gkd-allocation-audit`, starts at `earliest` for a new group, disables Kafka
+auto-commit, and uses record acknowledgement so successful processing returns only
+after the database transaction. The database commit and Kafka offset are not one
+distributed transaction: a failure after persistence but before offset progress can
+deliver the same `eventId` again and create another audit row.
+
+Consumer-side duplicate suppression is not implemented. There is no processed-event
+table, source-event uniqueness constraint for deduplication, or duplicate-success
+path. Application-owned retry classification, retry limits/backoff, dead-letter
+topics, and poison-message recovery are also not implemented. Malformed JSON,
+unsupported versions, key/payload mismatches, and persistence failures stop listener
+processing and are logged with bounded metadata rather than the complete payload.
+These limitations must be resolved by later work; no exactly-once claim applies.
+Pending and published outbox rows and audit rows have no automatic retention or
+cleanup policy. Later work must preserve the synchronous and PostgreSQL-backed
+correctness boundary described in
 [Architecture decision 7](DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).

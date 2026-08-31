@@ -1,18 +1,18 @@
 # Secure GKD Backend
 
-Secure GKD is a backend for distributing pre-provisioned game keys through an
-authenticated HTTP API. It currently runs as one synchronous Java 17 Spring Boot
-service backed by PostgreSQL. The service can authenticate pre-existing identities,
-create and retrieve Games, and allocate an available GameKey with persisted
-idempotency.
+Secure GKD distributes pre-provisioned game keys through an authenticated HTTP API.
+The repository contains two independently deployable Java 17 Spring Boot services:
+the authoritative synchronous allocation application and a Kafka-driven allocation-
+audit background service. Each owns a separate PostgreSQL database.
 
 The allocation response is authoritative and synchronous. For each new Allocation,
 the allocation transaction creates the application-owned version-1
 `AllocationCreated` event intent and persists it in the `allocation_outbox` table. An
 optional background publisher now delivers committed pending intents to the existing
 `secure-gkd.allocation-created` Kafka topic. Docker Compose enables that publisher
-against its single local broker; standalone runtime remains publisher-disabled by
-default. There is still no Kafka consumer, audit service, or audit persistence.
+against its single local broker; standalone allocation runtime remains publisher-
+disabled by default. The audit service consumes version-1 events independently and
+persists downstream audit records without joining the synchronous allocation path.
 
 ## Current capabilities
 
@@ -27,6 +27,10 @@ default. There is still no Kafka consumer, audit service, or audit persistence.
   intent for each new Allocation, excluding secret GameKey and idempotency-key data.
 - Optional asynchronous, acknowledged, at-least-once Kafka publication of pending
   outbox intents using their persisted event UUID and exact stored JSON payload.
+- Independent background consumption with explicit version/key validation, record
+  acknowledgement, and audit-owned PostgreSQL/Flyway persistence.
+- Separate allocation and audit service images, database identities, schemas, and
+  persistent volumes; neither service accesses the other's tables.
 - Flyway-owned PostgreSQL migrations with Hibernate schema validation.
 - Bean Validation-backed request validation and structured public API error handling.
 - Per-request `X-Request-Id` correlation and bounded application-owned
@@ -35,7 +39,7 @@ default. There is still no Kafka consumer, audit service, or audit persistence.
 
 ## Architecture and correctness boundary
 
-The application follows a conventional synchronous controller-service-repository
+The allocation application follows a conventional synchronous controller-service-repository
 flow. Spring Security authenticates and authorizes the request, Spring MVC binds DTOs,
 services own application behavior and transactions, and Spring Data JPA/Hibernate
 access PostgreSQL. Controllers do not expose JPA entities as API responses.
@@ -49,6 +53,12 @@ event intent. Candidate selection does not lock or reserve a GameKey, so Postgre
 unique constraint allowing only one Allocation per GameKey is the final
 duplicate-allocation protection.
 
+The audit application has no public HTTP API. It consumes string-keyed JSON from
+`secure-gkd.allocation-created` with group `secure-gkd-allocation-audit`, starts a new
+group at `earliest`, disables auto-commit, validates schema version 1 and matching
+event UUIDs, and persists each accepted record in one audit database transaction.
+Audit state is eventually consistent and does not affect allocation success.
+
 Flyway creates and evolves the normal schema at startup. Hibernate is configured with
 `ddl-auto: validate`, so it validates the migrated schema rather than creating or
 updating it. See [Architecture](docs/ARCHITECTURE.md) for the full system and request
@@ -59,7 +69,7 @@ flows and [Architecture decisions](docs/DECISIONS.md) for their rationale and li
 - Java 17 and Spring Boot 3.5
 - Spring MVC, Spring Security, and OAuth2 Resource Server
 - Spring Data JPA, Hibernate, and HikariCP
-- Spring Kafka producer support
+- Spring Kafka producer and independent consumer support
 - PostgreSQL (version 16 is the Compose, CI, and controlled deployment-verification
   baseline)
 - Apache Kafka 4.3.1 in single-node KRaft mode for local infrastructure only
@@ -70,7 +80,7 @@ flows and [Architecture decisions](docs/DECISIONS.md) for their rationale and li
 ## Quick start with Docker Compose
 
 Docker with Compose support is the recommended self-contained local path; it builds
-the application and starts it with PostgreSQL 16 and a single local Kafka broker.
+both applications and starts them with separate PostgreSQL 16 databases and one local Kafka broker.
 Host Java, Maven, PostgreSQL, and Kafka installations are not required.
 
 1. Copy the environment template to the untracked `.env` file:
@@ -81,10 +91,12 @@ Host Java, Maven, PostgreSQL, and Kafka installations are not required.
 
    In PowerShell, use `Copy-Item .env.example .env` instead.
 
-2. Set both required values in `.env`:
+2. Set all three required values in `.env`:
 
    ```dotenv
    SPRING_DATASOURCE_PASSWORD=<local-only-password>
+   AUDIT_DATASOURCE_PASSWORD=<different-local-only-password>
+   AUDIT_DATABASE_HOST_PORT=55432
    JWT_SIGNING_KEY_BASE64=<Base64-for-at-least-32-random-bytes>
    ```
 
@@ -96,7 +108,7 @@ Host Java, Maven, PostgreSQL, and Kafka installations are not required.
 
    ```sh
    docker compose config --quiet
-   docker compose build application
+   docker compose build application audit-service
    docker compose up --detach
    ```
 
@@ -109,9 +121,10 @@ Host Java, Maven, PostgreSQL, and Kafka installations are not required.
 
    A ready application returns HTTP `200` with a JSON body containing
    `"status":"UP"`. This endpoint reports application HTTP health; it does not
-   independently query PostgreSQL or Kafka. The `kafka` service should report
-   healthy, and the one-shot `kafka-topic-init` service should exit successfully
-   after ensuring that `secure-gkd.allocation-created` exists.
+   independently query PostgreSQL, Kafka, or audit state. Both databases and Kafka
+   should report healthy, both applications should be running, and the one-shot
+   `kafka-topic-init` service should exit successfully after ensuring that
+   `secure-gkd.allocation-created` exists.
 
 Compose-network Kafka clients use `kafka:9092`; host-side development tools use
 `localhost:29092`, which is published only on the IPv4 loopback interface. Both
@@ -132,6 +145,14 @@ datasource-password or JWT-signing-key fallbacks.
 | `JWT_SIGNING_KEY_BASE64` | Required Base64 encoding of at least 32 bytes of signing material for runtime profiles. |
 | `SPRING_DATASOURCE_URL` | Optional local override; required by the `test` and `prod` profiles. |
 | `SPRING_DATASOURCE_USERNAME` | Optional local override; required by the `test` and `prod` profiles. |
+| `AUDIT_DATASOURCE_URL` | Optional audit-service override; defaults to the loopback audit database using `AUDIT_DATABASE_HOST_PORT`. |
+| `AUDIT_DATASOURCE_USERNAME` | Optional audit-service override; defaults to `secure_gkd_audit_user`. |
+| `AUDIT_DATASOURCE_PASSWORD` | Required audit-owned database password with no fallback. |
+| `AUDIT_DATABASE_HOST_PORT` | Optional loopback host port for Compose and direct-host audit execution; defaults to `55432`. Container-side PostgreSQL remains on `5432`. |
+| `AUDIT_DATABASE_SCHEMA` | Optional audit schema override; defaults to `public` in the separately owned audit database. |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka address; Compose supplies `kafka:9092` to both asynchronous components. |
+| `AUDIT_KAFKA_TOPIC` | Audit topic; defaults to `secure-gkd.allocation-created`. |
+| `AUDIT_KAFKA_CONSUMER_GROUP` | Stable audit group; defaults to `secure-gkd-allocation-audit`. |
 | `JWT_ACCESS_TOKEN_LIFETIME` | Optional whole-second duration from one second through 24 hours; defaults to `PT15M`. |
 | `SPRING_PROFILES_ACTIVE` | Selects the environment profile; `local` is the application default and deployments should select `prod`. |
 
@@ -203,25 +224,29 @@ Use the repository Maven Wrapper rather than a globally installed Maven executab
 
 ```powershell
 .\mvnw.cmd test
+.\mvnw.cmd -f audit-service\pom.xml test
 ```
 
 ```sh
 ./mvnw test
+./mvnw -f audit-service/pom.xml test
 ```
 
-Local test runs must receive the `test` profile's PostgreSQL datasource variables
-through an untracked environment. Database and integration tests retain the configured
-PostgreSQL datasource and do not substitute an embedded database.
+Local test runs must receive the allocation and audit PostgreSQL datasource variables
+through untracked environments. Database and integration tests retain the configured
+service-owned PostgreSQL datasource and do not substitute an embedded database.
 
-GitHub Actions runs the test suite and package build with Java 17 and a PostgreSQL 16
-service for pull requests targeting `main`. Passing local tests is not a claim that CI
-has run; CI results remain separate evidence.
+GitHub Actions runs both test suites and package builds with Java 17 and separate
+PostgreSQL 16 services for pull requests targeting `main`. Focused audit tests do not
+require Kafka in CI. Passing local tests is not a claim that CI has run; CI results
+remain separate evidence.
 
 ## Deployment contract and evidence
 
-The multi-stage [Dockerfile](Dockerfile) is the provider-neutral deployment artifact.
-It builds and runs the application with Java 17, places only the packaged JAR in the
-runtime image, and runs as a non-root user. A deployment supplies the `prod` profile,
+The root [Dockerfile](Dockerfile) and
+[audit-service/Dockerfile](audit-service/Dockerfile) are separate provider-neutral
+deployment artifacts. Each builds one Java 17 application, places only its packaged
+JAR in the runtime image, and runs as a non-root user. An allocation deployment supplies the `prod` profile,
 PostgreSQL connectivity and credentials, JWT signing material, effective port routing,
 and platform operations externally. The full contract is in
 [Deployment runtime](docs/DEPLOYMENT_RUNTIME.md).
@@ -247,20 +272,26 @@ continuously running public deployment. See
 - No allocation entitlement, billing, reservation, or per-user quota model.
 - `GET /api/health` reports application HTTP health, not independent PostgreSQL
   readiness.
+- Kafka delivery may repeat. Consumer-side processed-event tracking and duplicate
+  suppression are not implemented, so failure between audit persistence and offset
+  progress can create another audit record. There is no exactly-once guarantee.
+- The audit consumer has no application-owned retry classification/backoff, dead-letter
+  topic, or poison-message recovery. A failed record stops the baseline listener for
+  operator intervention and restart.
 - The deployment evidence does not establish high availability, autoscaling, backup
   recovery, disaster recovery, production traffic, or general production reliability.
 
-## Planned future direction
+## Consumer limitations and future direction
 
-A later distributed-system phase may add one independent consumer with idempotent
-event processing. The local broker and provisioned topic, version-1 JSON contract,
-transactional-outbox persistence, and optional background Kafka publisher are
-implemented. Pending intents survive publisher restarts, while acknowledged sends
-can still be published again if the database timestamp update does not commit. Audit
-consumption, consumer idempotency, consumer retry/dead-letter behavior, and audit
-persistence remain planned concepts. The present correctness boundary remains the
-synchronous `AllocationService.allocate` transaction and its PostgreSQL constraints;
-Kafka availability is not consulted while deciding allocation success. See the
+The local broker/topic, version-1 contract, transactional outbox, asynchronous
+publisher, independent audit consumer, and audit-owned persistence are implemented.
+Pending publication survives publisher restart, and the audit consumer resumes with
+its stable Kafka group after a clean restart. The database and Kafka offset are not
+one distributed transaction. Consumer idempotency, intentional retry/backoff,
+dead-letter handling, and poison-message recovery remain later work. The present
+correctness boundary remains the synchronous `AllocationService.allocate`
+transaction and its PostgreSQL constraints; Kafka and audit availability are not
+consulted while deciding allocation success. See the
 [AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) for its fields,
 semantics, compatibility rules, ownership, and sensitive-data boundary.
 The accepted boundary, transaction model, delivery assumptions, and rejected

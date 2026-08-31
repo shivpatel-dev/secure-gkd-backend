@@ -1,9 +1,10 @@
 # Architecture
 
-Secure GKD is currently one synchronous Java 17 Spring Boot service backed by
-PostgreSQL. This document is the reviewer-facing entry point to the architecture that
-exists in this repository; it is not a target architecture or a claim about an
-always-running deployment.
+Secure GKD now contains two independently deployable Java 17 Spring Boot services.
+The existing allocation service remains the authoritative synchronous HTTP service.
+The allocation-audit service is a Kafka-driven background service with its own
+PostgreSQL database and no public HTTP API. This document describes the repository's
+implemented boundaries; it is not a claim about an always-running deployment.
 
 ## System view
 
@@ -11,25 +12,31 @@ always-running deployment.
 flowchart LR
     Client[HTTP client]
 
-    subgraph App[Java 17 Spring Boot application]
+    subgraph Allocation[Allocation service]
         Security[Spring Security filter chain]
         MVC[Spring MVC controllers and DTOs]
         Services[Application services and transactions]
-        Repositories[Spring Data JPA repositories]
-        Hibernate[Hibernate ORM]
-        Pool[HikariCP DataSource]
-        JDBC[PostgreSQL JDBC driver]
-        Flyway[Flyway migrations]
-
-        Security --> MVC --> Services --> Repositories --> Hibernate --> Pool --> JDBC
+        Outbox[Allocation outbox publisher]
+        Security --> MVC --> Services
     end
 
-    Database[(PostgreSQL 16)]
+    AllocationDatabase[(Allocation PostgreSQL 16)]
+    Kafka[(secure-gkd.allocation-created)]
+
+    subgraph Audit[Allocation-audit service]
+        Consumer[Record-oriented Kafka listener]
+        AuditService[Audit persistence transaction]
+        Consumer --> AuditService
+    end
+
+    AuditDatabase[(Audit PostgreSQL 16)]
 
     Client -->|JSON over HTTP| Security
-    JDBC -->|SQL in the active transaction| Database
-    Flyway -->|create and evolve schema at startup| Database
-    Hibernate -. validates migrated schema at startup .-> Database
+    Services -->|authoritative transaction| AllocationDatabase
+    AllocationDatabase -->|committed outbox intents| Outbox
+    Outbox -->|version 1 JSON keyed by event UUID| Kafka
+    Kafka --> Consumer
+    AuditService -->|one local transaction per accepted record| AuditDatabase
 ```
 
 The principal boundaries and responsibilities are:
@@ -40,20 +47,20 @@ The principal boundaries and responsibilities are:
 - Controllers remain thin: they translate HTTP requests and responses and delegate
   application behavior to services. API responses use DTOs rather than exposing JPA
   entities.
-- Services own application workflows and transaction boundaries. Spring Data
-  repositories own persistence access, and Hibernate maps the entities and manages
-  the transaction-bound persistence context. Open-in-view is disabled.
-- Hibernate obtains JDBC access through the Spring-managed HikariCP datasource;
-  HikariCP pools PostgreSQL JDBC connections. Application services and repositories
-  do not open JDBC connections directly for normal work.
-- PostgreSQL stores durable state and enforces relational constraints that are part
-  of the correctness model. Flyway owns normal schema creation and evolution;
-  Hibernate uses `ddl-auto: validate` after migration and does not create or update
-  the normal schema.
+- The allocation service owns the synchronous workflows, API, allocation transaction,
+  and outbox publication. Kafka or audit availability does not determine allocation
+  success.
+- The audit service consumes the published JSON contract rather than depending on
+  allocation-service entities, DTOs, repositories, services, or tables. It validates
+  schema version 1 and the Kafka-key/payload event identity before persistence.
+- Each service has a separate Spring Data JPA/Hibernate persistence layer, HikariCP
+  datasource, Flyway history, and PostgreSQL database. Hibernate uses
+  `ddl-auto: validate`; neither service accesses the other's database.
 
 ## Persistence model and ownership
 
-The service owns application behavior for the following PostgreSQL-backed records:
+The allocation service owns application behavior for the following PostgreSQL-backed
+records:
 
 | Record | Responsibility and invariant |
 | --- | --- |
@@ -67,8 +74,13 @@ The service owns application behavior for the following PostgreSQL-backed record
 
 Foreign keys preserve the GameKey-to-Game, Allocation-to-GameKey,
 IdempotencyRecord-to-Allocation, and allocation-outbox-to-Allocation relationships.
-The complete schema and adoption rules are in
-[Database migrations](DATABASE_MIGRATIONS.md).
+The audit service separately owns `allocation_audit_record`. Its Allocation and Game
+IDs are plain source-system values, not cross-database relationships. The audit table
+retains a service-owned record UUID, source event UUID, schema version, event and
+allocation timestamps, source Allocation and Game IDs, non-secret Game code,
+request-correlation ID, and its own persistence timestamp. There is deliberately no
+source-event uniqueness constraint or processed-event table yet. The complete schema
+rules are in [Database migrations](DATABASE_MIGRATIONS.md).
 
 ## Allocation request and transaction flow
 
@@ -135,13 +147,21 @@ later selected rows remain pending behind it.
 Kafka availability is not consulted by the allocation transaction. A send failure or
 timeout leaves the durable intent pending for a later polling cycle and restart
 recovery. Kafka acknowledgement followed by a process or database-update failure can
-cause the pending event to be sent again. Publication is therefore at-least-once, not
-exactly-once. The current single publisher and single-partition Compose topic provide
-deterministic best-effort order for normal polling, not a global ordering guarantee
-across retries, crashes, multiple instances, or future partition changes. There is no
-audit consumer or audit persistence. The exact fields, semantics, compatibility
-rules, retention boundary, ownership, secret exclusions, and future-work boundary are
-in the [AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
+cause the pending event to be sent again. Publication is therefore at-least-once.
+
+The independent audit listener uses the stable `secure-gkd-allocation-audit` group,
+`earliest` initial offsets, disabled auto-commit, and record acknowledgement. A valid
+record is deserialized and persisted in one audit-owned transaction before listener
+processing returns. PostgreSQL commit and Kafka offset recording are not one atomic
+distributed transaction, so failure between them can redeliver the event and create
+another audit row. Consumer-side duplicate suppression is intentionally absent.
+
+Malformed JSON, unsupported versions, inconsistent message identity, and persistence
+failures leave listener processing failed. The baseline container stops on such a
+record and requires operator restart after the underlying condition is addressed; it
+does not define application-owned retry/backoff, dead-letter, or poison-message
+recovery. The exact contract and limitations are in the
+[AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
 
 ## Authentication and authorization
 
@@ -161,11 +181,10 @@ boundaries, and current limitations.
 
 ## Deployment architecture
 
-The repository defines one deployable application service through its multi-stage
-`Dockerfile`. Both build and runtime stages use Java 17, and the final image runs only
-the packaged Spring Boot JAR as a non-root user. PostgreSQL 16 is the repository's
-current Compose, CI, and controlled deployment-verification baseline; database
-provisioning remains outside the application image.
+The repository defines two deployable images: the root `Dockerfile` for the allocation
+service and `audit-service/Dockerfile` for the background consumer. Both use Java 17,
+package only their own Spring Boot application, and run as distinct non-root users.
+Compose and CI use separate PostgreSQL 16 databases for the two service-owned schemas.
 
 Production-oriented execution selects the `prod` profile and receives the datasource
 URL, datasource username and password, JWT signing key, and any token-lifetime or port
@@ -174,6 +193,12 @@ migrations, then Hibernate validates the migrated schema before the HTTP server 
 ready. `GET /api/health` is the current public HTTP/application health endpoint. Its
 controller returns application status without independently querying PostgreSQL, so
 it is not a database-readiness check.
+
+The audit service receives its own datasource settings plus Kafka bootstrap, topic,
+and group configuration. Normal Spring shutdown closes its listener container,
+consumer, datasource, and JPA resources. The allocation service has no dependency on
+the audit container or audit database and remains startable and healthy while the
+audit service is stopped.
 
 This repository-defined contract is provider-neutral and is detailed in
 [Deployment runtime](DEPLOYMENT_RUNTIME.md). The separate
