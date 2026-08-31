@@ -12,7 +12,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,21 +22,21 @@ class AllocationAuditPersistenceServiceTests {
 
     @Test
     void mapsTheEventToAServiceOwnedAuditRecordAndRetainsSourceIdentity() {
-        AllocationAuditRecordRepository repository = mock(AllocationAuditRecordRepository.class);
-        doAnswer(invocation -> invocation.getArgument(0))
-                .when(repository)
-                .saveAndFlush(any(AllocationAuditRecord.class));
+        AllocationAuditRecordWriter recordWriter = mock(AllocationAuditRecordWriter.class);
+        when(recordWriter.insertIfSourceEventUnseen(any())).thenReturn(1);
         AllocationAuditPersistenceService service = new AllocationAuditPersistenceService(
-                repository,
+                recordWriter,
                 Clock.fixed(PERSISTED_AT, ZoneOffset.UTC)
         );
 
-        service.persist(event());
+        AllocationAuditPersistenceOutcome outcome = service.persist(event());
 
-        ArgumentCaptor<AllocationAuditRecord> captor = ArgumentCaptor.forClass(AllocationAuditRecord.class);
-        verify(repository).saveAndFlush(captor.capture());
-        AllocationAuditRecord record = captor.getValue();
-        assertThat(record.getAuditRecordId()).isNotNull();
+        ArgumentCaptor<AllocationAuditRecord> recordCaptor =
+                ArgumentCaptor.forClass(AllocationAuditRecord.class);
+        verify(recordWriter).insertIfSourceEventUnseen(recordCaptor.capture());
+        AllocationAuditRecord record = recordCaptor.getValue();
+        assertThat(outcome).isEqualTo(AllocationAuditPersistenceOutcome.PERSISTED);
+        assertThat(record.getAuditRecordId()).isNotNull().isNotEqualTo(event().eventId());
         assertThat(record.getSourceEventId()).isEqualTo(event().eventId());
         assertThat(record.getSchemaVersion()).isEqualTo(1);
         assertThat(record.getEventOccurredAt()).isEqualTo(event().occurredAt());
@@ -50,17 +49,44 @@ class AllocationAuditPersistenceServiceTests {
     }
 
     @Test
-    void doesNotConvertRepositoryFailureIntoSuccess() {
-        AllocationAuditRecordRepository repository = mock(AllocationAuditRecordRepository.class);
-        when(repository.saveAndFlush(any())).thenThrow(new IllegalStateException("write failed"));
+    void reportsDatabaseDetectedDuplicateAsSuccessfulOutcome() {
+        AllocationAuditRecordWriter recordWriter = mock(AllocationAuditRecordWriter.class);
+        when(recordWriter.insertIfSourceEventUnseen(any())).thenReturn(0);
         AllocationAuditPersistenceService service = new AllocationAuditPersistenceService(
-                repository,
+                recordWriter,
+                Clock.systemUTC()
+        );
+
+        assertThat(service.persist(event())).isEqualTo(AllocationAuditPersistenceOutcome.DUPLICATE);
+    }
+
+    @Test
+    void doesNotConvertRepositoryFailureIntoSuccess() {
+        AllocationAuditRecordWriter recordWriter = mock(AllocationAuditRecordWriter.class);
+        when(recordWriter.insertIfSourceEventUnseen(any()))
+                .thenThrow(new IllegalStateException("write failed"));
+        AllocationAuditPersistenceService service = new AllocationAuditPersistenceService(
+                recordWriter,
                 Clock.systemUTC()
         );
 
         assertThatThrownBy(() -> service.persist(event()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("write failed");
+    }
+
+    @Test
+    void doesNotClassifyAnUnexpectedInsertResultAsDuplicate() {
+        AllocationAuditRecordWriter recordWriter = mock(AllocationAuditRecordWriter.class);
+        when(recordWriter.insertIfSourceEventUnseen(any())).thenReturn(2);
+        AllocationAuditPersistenceService service = new AllocationAuditPersistenceService(
+                recordWriter,
+                Clock.systemUTC()
+        );
+
+        assertThatThrownBy(() -> service.persist(event()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Unexpected allocation audit insert result");
     }
 
     private AllocationCreated event() {

@@ -201,17 +201,24 @@ Then query only the audit-owned database:
 docker compose exec audit-database psql \
   --username secure_gkd_audit_user \
   --dbname secure_gkd_audit \
-  --command "select source_event_id, schema_version, source_allocation_id, source_game_id, game_code, request_id from allocation_audit_record order by persisted_at;"
+  --command "select audit_record_id, source_event_id, schema_version, source_allocation_id, source_game_id, game_code, request_id, persisted_at from allocation_audit_record order by persisted_at;"
 ```
 
 The row should contain the synthetic source values. It must not contain a GameKey,
 allocation idempotency key, credentials, token material, or arbitrary request data.
 The audit service records a separate `audit_record_id` and `persisted_at` timestamp.
+Record those two service-owned values, rerun the same producer command with the same
+key and payload, and query the row again. Exactly one row must retain the original
+`audit_record_id` and `persisted_at`; bounded audit-service logs should distinguish
+the intentionally ignored duplicate from the original persisted outcome.
 
 For bounded restart evidence, stop and start the audit service, wait for its listener
-to rejoin the stable group, publish a second record with a new event UUID and source
-identifiers, and verify the second row. Normal Spring shutdown closes the listener,
-Kafka consumer, JPA context, and datasource cleanly:
+to rejoin the stable group, and publish the original synthetic record once more. The
+same one audit row must remain, demonstrating that duplicate protection comes from
+durable audit-owned PostgreSQL state rather than process memory. Then publish a
+second record with a new UUID in both the Kafka key and payload `eventId` plus new
+synthetic source identifiers; verify that it creates a second row. Normal Spring
+shutdown closes the listener, Kafka consumer, JPA context, and datasource cleanly:
 
 ```sh
 docker compose stop audit-service
@@ -229,10 +236,12 @@ docker compose start audit-service
 ```
 
 This direct synthetic check is deliberately bounded. It does not claim a final
-allocation-to-outbox-to-Kafka integration suite, duplicate-safe processing, or an
-exactly-once database/offset transaction. A failure after audit commit but before
-Kafka offset progress can create another audit row. Application-owned retry/backoff,
-dead-letter handling, and poison-message recovery remain later work.
+allocation-to-outbox-to-Kafka integration suite or an exactly-once database/offset
+transaction. A failure after audit commit but before Kafka offset progress can still
+cause redelivery; audit-owned source-event uniqueness makes that delivery a
+successful no-op rather than a second audit effect. Kafka publication and delivery
+remain at-least-once. Application-owned retry/backoff, dead-letter handling, and
+poison-message recovery remain later work.
 
 If startup or a check does not complete, inspect bounded recent logs rather than
 exposing the rendered Compose configuration:

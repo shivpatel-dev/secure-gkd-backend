@@ -194,8 +194,10 @@ synchronous allocation service and one independently deployable allocation-audit
 background service. Docker Compose provides the existing local Kafka topic plus a
 separate PostgreSQL 16 database for each service. The audit service consumes version-1
 JSON with the stable `secure-gkd-allocation-audit` group and persists an audit-owned
-record after validating the schema and transport identity. Consumer idempotency and
-application-owned retry/backoff/dead-letter recovery are not implemented.
+record after validating the schema and transport identity. The existing source event
+identity is database-unique and makes duplicate consumer effects idempotent.
+Application-owned retry/backoff/dead-letter and poison-message recovery are not
+implemented.
 
 The current allocation behavior remains authoritative. `AllocationService.allocate`
 owns the PostgreSQL-backed transaction containing Game and GameKey lookup, Allocation,
@@ -275,9 +277,11 @@ instead of reversing the authoritative allocation.
 The synchronous allocation response is consistent with the allocation service's
 committed PostgreSQL state. Audit state is eventually consistent and may lag while
 publication or processing recovers. The design assumes publication or delivery can
-occur more than once. The current consumer retains source `eventId` but does not
-suppress duplicates, so an uncertain database/offset boundary can create another
-audit row. This is not an exactly-once or effectively-once end-to-end claim.
+occur more than once. The consumer retains source `eventId` and uses audit-owned
+PostgreSQL uniqueness plus an atomic insert-or-ignore operation to produce at most
+one audit effect for that logical identity. An uncertain database/offset boundary can
+still redeliver the event, but the repeated delivery completes successfully without
+changing the original audit row. This is not an exactly-once end-to-end claim.
 
 Expected failure conditions include:
 
@@ -285,7 +289,7 @@ Expected failure conditions include:
 | --- | --- |
 | Kafka is temporarily unavailable after allocation commits | The committed outbox intent remains available for a later publication attempt; the allocation remains valid. |
 | The outbox publisher fails or restarts | It resumes from committed outbox state. An uncertain attempt can lead to duplicate publication. |
-| An event is published or delivered more than once | The current audit consumer can persist another effect; later idempotent-processing work must use the retained source identity. |
+| An event is published or delivered more than once | The audit consumer uses the retained source `eventId` to recognize the database-protected duplicate and completes without a second audit effect. |
 | The audit consumer is unavailable | Audit state falls behind the allocation service's authoritative state until consumption can resume; the allocation remains valid. |
 | Audit processing or audit persistence fails | The listener does not acknowledge successful processing; the baseline stops the listener container and requires restart after intervention. It does not roll back or invalidate the allocation. |
 
@@ -312,9 +316,10 @@ publish intent atomically in one PostgreSQL transaction. An independent schedule
 publisher delivers committed pending intents to Kafka and records `published_at`
 only after producer acknowledgement. This avoids losing the intent
 across the database/Kafka boundary while keeping Kafka outside the allocation
-transaction. It still permits duplicate publication and delivery, so it requires
-later idempotent downstream processing and does not provide exactly-once end-to-end
-delivery. The present audit consumer deliberately exposes that temporary limitation.
+transaction. It still permits duplicate publication and delivery. The audit
+consumer's database-backed idempotent effect now makes those duplicates harmless for
+one logical source event, but PostgreSQL commit and Kafka offset progress remain
+separate operations and do not provide exactly-once end-to-end delivery.
 
 ### Rejected alternatives and tradeoffs
 
@@ -324,6 +329,7 @@ delivery. The present audit consumer deliberately exposes that temporary limitat
 | Make audit processing a synchronous allocation dependency | Audit latency or unavailability would delay or reject an otherwise valid allocation even though audit processing does not decide allocation correctness. |
 | Write PostgreSQL state and publish directly to Kafka as independent operations | This creates the dual-write failure windows addressed by the transactional outbox. |
 | Share one application-owned database or application-owned tables between allocation and audit services | Shared persistence would bypass the event contract, couple deployments and schema evolution, and blur ownership. Each service owns and accesses only its persistence. |
+| Add a separate audit processed-event table | The audit record already retains the stable source event UUID, so making that column unique supplies durable duplicate protection without a second persistence model. |
 | Add more services merely to increase the microservice count | Additional network and operational boundaries would add failure modes without isolating another justified responsibility. The single audit boundary is the smallest distributed extension that provides independent audit processing. |
 
 The tradeoff is accepting Kafka and another deployable service, eventual audit

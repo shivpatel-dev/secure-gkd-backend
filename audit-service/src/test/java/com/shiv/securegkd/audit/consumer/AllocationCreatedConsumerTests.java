@@ -4,20 +4,27 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.shiv.securegkd.audit.event.AllocationCreated;
+import com.shiv.securegkd.audit.persistence.AllocationAuditPersistenceOutcome;
 import com.shiv.securegkd.audit.persistence.AllocationAuditPersistenceService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+@ExtendWith(OutputCaptureExtension.class)
 class AllocationCreatedConsumerTests {
 
     private static final String EVENT_ID = "018f47a2-5d91-7d37-a7f8-4d781f28b983";
@@ -31,14 +38,34 @@ class AllocationCreatedConsumerTests {
     @BeforeEach
     void setUp() {
         persistenceService = mock(AllocationAuditPersistenceService.class);
+        when(persistenceService.persist(any(AllocationCreated.class)))
+                .thenReturn(AllocationAuditPersistenceOutcome.PERSISTED);
         consumer = new AllocationCreatedConsumer(objectMapper, persistenceService);
     }
 
     @Test
-    void persistsAValidEventAfterEnforcingTransportIdentity() {
+    void persistsAValidEventAfterEnforcingTransportIdentity(CapturedOutput output) {
         consumer.consume(record(EVENT_ID, validJson()));
 
         verify(persistenceService).persist(any(AllocationCreated.class));
+        assertThat(output).contains("allocation_audit_persisted")
+                .doesNotContain("allocation_audit_duplicate_ignored");
+    }
+
+    @Test
+    void treatsADuplicateAsSuccessfulProcessingWithoutLoggingPayloadData(CapturedOutput output) {
+        when(persistenceService.persist(any(AllocationCreated.class)))
+                .thenReturn(AllocationAuditPersistenceOutcome.DUPLICATE);
+
+        consumer.consume(record(EVENT_ID, validJson()));
+
+        verify(persistenceService).persist(any(AllocationCreated.class));
+        assertThat(output).contains("allocation_audit_duplicate_ignored")
+                .contains("eventId=" + EVENT_ID)
+                .doesNotContain("DEMO-GAME")
+                .doesNotContain("f49f5ba7-53ee-4c8b-95af-29e75831176a")
+                .doesNotContain("gameKey")
+                .doesNotContain("idempotencyKey");
     }
 
     @Test
@@ -71,13 +98,18 @@ class AllocationCreatedConsumerTests {
     }
 
     @Test
-    void surfacesAuditPersistenceFailure() {
+    void surfacesAuditPersistenceFailure(CapturedOutput output) {
         doThrow(new IllegalStateException("database unavailable"))
                 .when(persistenceService)
                 .persist(any(AllocationCreated.class));
 
         assertThatThrownBy(() -> consumer.consume(record(EVENT_ID, validJson())))
                 .isInstanceOf(AllocationAuditProcessingException.class);
+
+        assertThat(output).contains("allocation_audit_processing_failed")
+                .contains("failureType=IllegalStateException")
+                .doesNotContain("database unavailable")
+                .doesNotContain("DEMO-GAME");
     }
 
     private ConsumerRecord<String, String> record(String key, String value) {
