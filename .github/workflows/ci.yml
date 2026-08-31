@@ -41,12 +41,6 @@ jobs:
 
     env:
       SPRING_PROFILES_ACTIVE: test
-      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/secure_gkd
-      SPRING_DATASOURCE_USERNAME: secure_gkd_user
-      SPRING_DATASOURCE_PASSWORD: secure_gkd_ci_password
-      AUDIT_DATASOURCE_URL: jdbc:postgresql://localhost:5433/secure_gkd_audit
-      AUDIT_DATASOURCE_USERNAME: secure_gkd_audit_user
-      AUDIT_DATASOURCE_PASSWORD: secure_gkd_audit_ci_password
 
     steps:
       - name: Checkout repository
@@ -63,13 +57,29 @@ jobs:
         run: chmod +x mvnw
 
       - name: Run allocation-service tests
+        env:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/secure_gkd
+          SPRING_DATASOURCE_USERNAME: secure_gkd_user
+          SPRING_DATASOURCE_PASSWORD: secure_gkd_ci_password
         run: ./mvnw test
 
       - name: Build allocation-service package
+        env:
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/secure_gkd
+          SPRING_DATASOURCE_USERNAME: secure_gkd_user
+          SPRING_DATASOURCE_PASSWORD: secure_gkd_ci_password
         run: ./mvnw package
 
       - name: Run audit-service tests
+        env:
+          AUDIT_DATASOURCE_URL: jdbc:postgresql://localhost:5433/secure_gkd_audit
+          AUDIT_DATASOURCE_USERNAME: secure_gkd_audit_user
+          AUDIT_DATASOURCE_PASSWORD: secure_gkd_audit_ci_password
         run: ./mvnw -f audit-service/pom.xml test
 
       - name: Build audit-service package
+        env:
+          AUDIT_DATASOURCE_URL: jdbc:postgresql://localhost:5433/secure_gkd_audit
+          AUDIT_DATASOURCE_USERNAME: secure_gkd_audit_user
+          AUDIT_DATASOURCE_PASSWORD: secure_gkd_audit_ci_password
         run: ./mvnw -f audit-service/pom.xml package
