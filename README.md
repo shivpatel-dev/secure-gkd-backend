@@ -28,7 +28,8 @@ persists downstream audit records without joining the synchronous allocation pat
 - Optional asynchronous, acknowledged, at-least-once Kafka publication of pending
   outbox intents using their persisted event UUID and exact stored JSON payload.
 - Independent background consumption with explicit version/key validation, record
-  acknowledgement, and audit-owned PostgreSQL/Flyway persistence.
+  acknowledgement, and idempotent audit-owned PostgreSQL/Flyway persistence keyed by
+  the stable source event UUID.
 - Separate allocation and audit service images, database identities, schemas, and
   persistent volumes; neither service accesses the other's tables.
 - Flyway-owned PostgreSQL migrations with Hibernate schema validation.
@@ -57,7 +58,9 @@ The audit application has no public HTTP API. It consumes string-keyed JSON from
 `secure-gkd.allocation-created` with group `secure-gkd-allocation-audit`, starts a new
 group at `earliest`, disables auto-commit, validates schema version 1 and matching
 event UUIDs, and persists each accepted record in one audit database transaction.
-Audit state is eventually consistent and does not affect allocation success.
+PostgreSQL uniqueness on the retained source event UUID makes a repeated logical
+event a successful no-op while preserving the original audit record. Audit state is
+eventually consistent and does not affect allocation success.
 
 Flyway creates and evolves the normal schema at startup. Hibernate is configured with
 `ddl-auto: validate`, so it validates the migrated schema rather than creating or
@@ -272,9 +275,10 @@ continuously running public deployment. See
 - No allocation entitlement, billing, reservation, or per-user quota model.
 - `GET /api/health` reports application HTTP health, not independent PostgreSQL
   readiness.
-- Kafka delivery may repeat. Consumer-side processed-event tracking and duplicate
-  suppression are not implemented, so failure between audit persistence and offset
-  progress can create another audit record. There is no exactly-once guarantee.
+- Kafka publication and delivery may repeat. The audit consumer uses the stable
+  `eventId` and audit-owned PostgreSQL uniqueness to suppress repeated audit effects,
+  but the database transaction and Kafka offset are not one distributed transaction.
+  There is no exactly-once end-to-end guarantee.
 - The audit consumer has no application-owned retry classification/backoff, dead-letter
   topic, or poison-message recovery. A failed record stops the baseline listener for
   operator intervention and restart.
@@ -287,11 +291,15 @@ The local broker/topic, version-1 contract, transactional outbox, asynchronous
 publisher, independent audit consumer, and audit-owned persistence are implemented.
 Pending publication survives publisher restart, and the audit consumer resumes with
 its stable Kafka group after a clean restart. The database and Kafka offset are not
-one distributed transaction. Consumer idempotency, intentional retry/backoff,
-dead-letter handling, and poison-message recovery remain later work. The present
-correctness boundary remains the synchronous `AllocationService.allocate`
-transaction and its PostgreSQL constraints; Kafka and audit availability are not
-consulted while deciding allocation success. See the
+one distributed transaction. The audit consumer now makes repeated version-1 event
+identity harmless by atomically inserting the audit row only when its `eventId` is
+not already protected by audit-owned PostgreSQL state. A commit followed by missing
+Kafka offset progress can still cause redelivery, but it cannot create a second audit
+effect for that identity. Application-owned retry classification/backoff,
+dead-letter handling, and poison-message recovery remain later work; no exactly-once
+end-to-end claim applies. The present correctness boundary remains the synchronous
+`AllocationService.allocate` transaction and its PostgreSQL constraints; Kafka and
+audit availability are not consulted while deciding allocation success. See the
 [AllocationCreated event contract](docs/ALLOCATION_CREATED_EVENT.md) for its fields,
 semantics, compatibility rules, ownership, and sensitive-data boundary.
 The accepted boundary, transaction model, delivery assumptions, and rejected

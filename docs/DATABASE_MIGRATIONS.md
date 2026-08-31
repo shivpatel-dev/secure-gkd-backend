@@ -34,8 +34,12 @@ The audit service has an independent version sequence and an independent
 service-owned UUID primary key and the source event identity, version, timestamps,
 Allocation and Game identifiers, non-secret Game code, request correlation, and audit
 persistence timestamp. Source Allocation and Game IDs are plain values: the migration
-creates no foreign keys to the allocation database. `source_event_id` is deliberately
-not unique because consumer-side duplicate suppression is later work.
+creates no foreign keys to the allocation database.
+`V2__make_source_event_id_unique.sql` adds a unique constraint to
+`allocation_audit_record.source_event_id`. The audit consumer uses that audit-owned
+constraint as the authoritative final protection against more than one audit effect
+for the same logical event while retaining the service-owned audit-record primary
+key. No separate processed-event table is introduced.
 
 Do not edit a migration after it has been applied. Every future schema change must be
 represented by a new migration with the next version. Review migrations together

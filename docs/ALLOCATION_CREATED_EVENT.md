@@ -110,18 +110,25 @@ Transactional-outbox persistence, asynchronous publication, audit consumption, a
 audit-owned persistence are implemented. The audit group is
 `secure-gkd-allocation-audit`, starts at `earliest` for a new group, disables Kafka
 auto-commit, and uses record acknowledgement so successful processing returns only
-after the database transaction. The database commit and Kafka offset are not one
-distributed transaction: a failure after persistence but before offset progress can
-deliver the same `eventId` again and create another audit row.
+after the audit database transaction. The audit record retains `eventId` as
+`source_event_id`, and audit-owned PostgreSQL enforces that value as unique. The
+consumer uses an atomic insert-or-ignore operation targeting only that uniqueness
+rule: an unseen identity creates one service-owned audit record, while a repeated
+identity completes successfully without replacing or changing the existing row.
+No separate processed-event table is needed.
 
-Consumer-side duplicate suppression is not implemented. There is no processed-event
-table, source-event uniqueness constraint for deduplication, or duplicate-success
-path. Application-owned retry classification, retry limits/backoff, dead-letter
-topics, and poison-message recovery are also not implemented. Malformed JSON,
-unsupported versions, key/payload mismatches, and persistence failures stop listener
+The database commit and Kafka offset are not one distributed transaction. A failure
+after persistence but before offset progress can still redeliver the same `eventId`;
+the durable uniqueness rule makes that redelivery a no-op rather than a second audit
+effect. Kafka publication and delivery therefore remain at-least-once, and this is
+not an exactly-once end-to-end guarantee.
+
+Application-owned retry classification, retry limits/backoff, dead-letter topics,
+and poison-message recovery are not implemented. Malformed JSON, unsupported
+versions, key/payload mismatches, and genuine persistence failures stop listener
 processing and are logged with bounded metadata rather than the complete payload.
-These limitations must be resolved by later work; no exactly-once claim applies.
-Pending and published outbox rows and audit rows have no automatic retention or
-cleanup policy. Later work must preserve the synchronous and PostgreSQL-backed
-correctness boundary described in
+Newly persisted, intentionally ignored duplicate, and failed outcomes have distinct
+bounded log events. Pending and published outbox rows and audit rows have no
+automatic retention or cleanup policy. Later work must preserve the synchronous and
+PostgreSQL-backed correctness boundary described in
 [Architecture decision 7](DECISIONS.md#7-add-one-asynchronous-boundary-for-allocation-audit-processing).

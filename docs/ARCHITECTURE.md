@@ -78,9 +78,10 @@ The audit service separately owns `allocation_audit_record`. Its Allocation and 
 IDs are plain source-system values, not cross-database relationships. The audit table
 retains a service-owned record UUID, source event UUID, schema version, event and
 allocation timestamps, source Allocation and Game IDs, non-secret Game code,
-request-correlation ID, and its own persistence timestamp. There is deliberately no
-source-event uniqueness constraint or processed-event table yet. The complete schema
-rules are in [Database migrations](DATABASE_MIGRATIONS.md).
+request-correlation ID, and its own persistence timestamp. PostgreSQL uniqueness on
+the source event UUID provides the durable processed-event record; no separate
+processed-event table is used. The complete schema rules are in
+[Database migrations](DATABASE_MIGRATIONS.md).
 
 ## Allocation request and transaction flow
 
@@ -152,15 +153,22 @@ cause the pending event to be sent again. Publication is therefore at-least-once
 The independent audit listener uses the stable `secure-gkd-allocation-audit` group,
 `earliest` initial offsets, disabled auto-commit, and record acknowledgement. A valid
 record is deserialized and persisted in one audit-owned transaction before listener
-processing returns. PostgreSQL commit and Kafka offset recording are not one atomic
-distributed transaction, so failure between them can redeliver the event and create
-another audit row. Consumer-side duplicate suppression is intentionally absent.
+processing returns. The insert targets the unique source event UUID and atomically
+creates one row or reports an already-recorded identity as an intentional successful
+no-op. The original service-owned record UUID and persistence timestamp remain
+unchanged on duplicate delivery. PostgreSQL commit and Kafka offset recording are
+not one atomic distributed transaction, so failure between them can still redeliver
+the event; audit-owned uniqueness prevents that redelivery from creating another
+audit effect. This is an idempotent consumer effect, not exactly-once end-to-end
+delivery.
 
 Malformed JSON, unsupported versions, inconsistent message identity, and persistence
 failures leave listener processing failed. The baseline container stops on such a
 record and requires operator restart after the underlying condition is addressed; it
 does not define application-owned retry/backoff, dead-letter, or poison-message
-recovery. The exact contract and limitations are in the
+recovery. Intentionally ignored duplicates complete successfully and do not block
+Kafka progress. Newly persisted, duplicate, and failed outcomes use distinct bounded
+non-secret logs. The exact contract and limitations are in the
 [AllocationCreated event contract](ALLOCATION_CREATED_EVENT.md).
 
 ## Authentication and authorization

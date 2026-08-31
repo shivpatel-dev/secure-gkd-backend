@@ -2,6 +2,7 @@ package com.shiv.securegkd.audit.consumer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shiv.securegkd.audit.event.AllocationCreated;
+import com.shiv.securegkd.audit.persistence.AllocationAuditPersistenceOutcome;
 import com.shiv.securegkd.audit.persistence.AllocationAuditPersistenceService;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
@@ -41,14 +42,26 @@ public class AllocationCreatedConsumer {
                 throw new IllegalArgumentException("Kafka key does not match payload eventId");
             }
 
-            persistenceService.persist(event);
-            LOGGER.info(
-                    "allocation_audit_persisted eventId={} topic={} partition={} offset={}",
-                    event.eventId(),
-                    record.topic(),
-                    record.partition(),
-                    record.offset()
-            );
+            AllocationAuditPersistenceOutcome outcome = persistenceService.persist(event);
+            if (outcome == AllocationAuditPersistenceOutcome.PERSISTED) {
+                LOGGER.info(
+                        "allocation_audit_persisted eventId={} topic={} partition={} offset={}",
+                        event.eventId(),
+                        record.topic(),
+                        record.partition(),
+                        record.offset()
+                );
+            } else if (outcome == AllocationAuditPersistenceOutcome.DUPLICATE) {
+                LOGGER.info(
+                        "allocation_audit_duplicate_ignored eventId={} topic={} partition={} offset={}",
+                        event.eventId(),
+                        record.topic(),
+                        record.partition(),
+                        record.offset()
+                );
+            } else {
+                throw new IllegalStateException("Unexpected allocation audit persistence outcome");
+            }
         } catch (Exception exception) {
             LOGGER.warn(
                     "allocation_audit_processing_failed topic={} partition={} offset={} failureType={}",
