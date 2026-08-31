@@ -233,21 +233,35 @@ Use the repository Maven Wrapper rather than a globally installed Maven executab
 ```powershell
 .\mvnw.cmd test
 .\mvnw.cmd -f audit-service\pom.xml test
+.\mvnw.cmd package
+.\mvnw.cmd -f audit-service\pom.xml package
+.\mvnw.cmd -f integration-tests\pom.xml verify
 ```
 
 ```sh
 ./mvnw test
 ./mvnw -f audit-service/pom.xml test
+./mvnw package
+./mvnw -f audit-service/pom.xml package
+./mvnw -f integration-tests/pom.xml verify
 ```
 
 Local test runs must receive the allocation and audit PostgreSQL datasource variables
 through untracked environments. Database and integration tests retain the configured
 service-owned PostgreSQL datasource and do not substitute an embedded database.
 
+The asynchronous integration command requires Docker and the two packaged service
+JARs produced by the preceding package commands. It creates one real Kafka broker and
+two disposable PostgreSQL 16 containers, starts each application artifact as a
+separate JVM, and removes the isolated container state when the suite ends. The suite
+uses only synthetic fixtures and bounded eventual assertions; it does not use the
+developer Compose volumes or an external broker or database.
+
 GitHub Actions runs both test suites and package builds with Java 17 and separate
-PostgreSQL 16 services for pull requests targeting `main`. Focused audit tests do not
-require Kafka in CI. Passing local tests is not a claim that CI has run; CI results
-remain separate evidence.
+PostgreSQL 16 services for pull requests targeting `main`, then runs the asynchronous
+integration suite against disposable Kafka and PostgreSQL containers. Focused audit
+tests still do not require Kafka. Passing local tests is not a claim that CI has run;
+CI results remain separate evidence.
 
 ## Deployment contract and evidence
 

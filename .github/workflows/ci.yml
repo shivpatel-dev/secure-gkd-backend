@@ -83,3 +83,6 @@ jobs:
           AUDIT_DATASOURCE_USERNAME: secure_gkd_audit_user
           AUDIT_DATASOURCE_PASSWORD: secure_gkd_audit_ci_password
         run: ./mvnw -f audit-service/pom.xml package
+
+      - name: Run asynchronous allocation-audit integration tests
+        run: ./mvnw -f integration-tests/pom.xml verify
