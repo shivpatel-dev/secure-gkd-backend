@@ -331,6 +331,32 @@ docker compose down
 docker compose up --detach
 ```
 
+PostgreSQL applies the image's initial database, role, and password settings only
+when it initializes an empty data directory. After `postgres-data` or
+`audit-postgres-data` has been created, changing the corresponding password in `.env`
+changes what Compose supplies to the containers and applications; it does not rewrite
+the password already stored for that PostgreSQL role in the retained volume. A
+healthy database followed by password-authentication failures after such an `.env`
+change can therefore indicate persisted local credential drift, not an application
+datasource or migration defect.
+
+Diagnose before resetting data:
+
+1. Run `docker compose config --quiet` to validate required configuration without
+   printing interpolated secret values.
+2. Run `docker compose ps --all` and inspect only bounded logs for the affected pair,
+   such as `docker compose logs --tail 100 database application` or
+   `docker compose logs --tail 100 audit-database audit-service`.
+3. Confirm privately that the intended `.env` entry belongs to the affected service
+   and whether its named volume was initialized before that value changed. Do not
+   paste, echo, or log either the current or previous password.
+4. If the retained data matters, deliberately reconcile the stored role password
+   through an authenticated PostgreSQL administration session, or restore the
+   matching local secret source. Keep the password out of command history and logs.
+
+Changing a PostgreSQL role credential is a separate administrative operation; neither
+editing `.env` nor restarting Compose performs it automatically.
+
 To deliberately discard all allocation PostgreSQL, audit PostgreSQL, and Kafka data and reproduce a clean
 Flyway- and topic-initialization-backed startup, remove both Compose volumes and then
 start again:
