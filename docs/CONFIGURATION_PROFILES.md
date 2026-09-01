@@ -89,5 +89,15 @@ The consumer uses string keys/values, disabled auto-commit, `earliest` initial o
 behavior, record acknowledgement, and string serialization for original-record
 dead-letter publication. Tests disable listener startup. Compose and direct-host
 execution default to port `55432`; CI explicitly maps its separate audit PostgreSQL 16
-service to port `5433`. Kafka is not a CI service for these focused tests. Neither
-service receives the other service's datasource URL or credentials.
+service to port `5433`. Kafka is not a CI service for these focused tests. Compose and
+CI give each service only its service-owned datasource values.
+
+For a direct host launch, Spring's normal external-configuration precedence still
+applies: generic `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, or
+`SPRING_DATASOURCE_PASSWORD` variables in that same process can override the
+`spring.datasource` values mapped from the audit variables above. Keep those generic
+allocation variables out of a directly launched audit runtime. The audit module's
+Maven test/package configuration handles the verification case separately by
+excluding those three generic variables from the forked test JVM while retaining the
+audit-owned variables. It also pins only the audit test JVM to UTC; it does not change
+the packaged application's runtime timezone.

@@ -247,9 +247,16 @@ Use the repository Maven Wrapper rather than a globally installed Maven executab
 ./mvnw -f integration-tests/pom.xml verify
 ```
 
-Local test runs must receive the allocation and audit PostgreSQL datasource variables
-through untracked environments. Database and integration tests retain the configured
-service-owned PostgreSQL datasource and do not substitute an embedded database.
+Local allocation test/package runs require the three `SPRING_DATASOURCE_*` values,
+and local audit test/package runs require `AUDIT_DATASOURCE_PASSWORD` plus any
+intended `AUDIT_DATASOURCE_URL`, `AUDIT_DATASOURCE_USERNAME`,
+`AUDIT_DATABASE_HOST_PORT`, or `AUDIT_DATABASE_SCHEMA` overrides. Supply them through
+an untracked environment. The audit module excludes ambient allocation
+`SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and
+`SPRING_DATASOURCE_PASSWORD` variables from its forked test JVM and runs that JVM in
+UTC, so the commands above remain reproducible when both services' variables coexist
+in the calling shell. Database and integration tests retain their configured
+service-owned PostgreSQL datasources and do not substitute an embedded database.
 
 The asynchronous integration command requires Docker and the two packaged service
 JARs produced by the preceding package commands. It creates one real Kafka broker and
