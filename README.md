@@ -78,7 +78,8 @@ flows and [Architecture decisions](docs/DECISIONS.md) for their rationale and li
 - Spring Kafka producer and independent consumer support
 - PostgreSQL (version 16 is the Compose, CI, and controlled deployment-verification
   baseline)
-- Apache Kafka 4.3.1 in single-node KRaft mode for local infrastructure only
+- Apache Kafka 4.3.1 in single-node KRaft mode for local development and temporary
+  non-production exercises
 - Flyway database migrations
 - springdoc OpenAPI and Swagger UI
 - Maven Wrapper, Docker, and Docker Compose
@@ -288,8 +289,17 @@ availability, autoscaling, disaster recovery, production traffic, or general
 production reliability. The temporary Render application and database resources were
 intentionally removed after verification, so this project does not claim a
 continuously running public deployment. See
-[Deployment verification](docs/DEPLOYMENT_VERIFICATION.md) for the evidence and
-[Deployment runbook](docs/DEPLOYMENT_RUNBOOK.md) for the separate operator procedure.
+[Render deployment verification](docs/DEPLOYMENT_VERIFICATION.md) for the evidence and
+[Render deployment runbook](docs/DEPLOYMENT_RUNBOOK.md) for the separate operator procedure.
+
+A temporary AWS EC2 exercise on October 14, 2026 verified the complete two-service
+Compose topology, including both PostgreSQL databases, Kafka delivery, and durable
+audit persistence. The final verification resumed with retained synthetic fixtures;
+reused operations were not newly exercised. AWS resources were removed on October 15,
+2026. This single-node exercise does not establish production readiness or ongoing
+hosting. See [AWS deployment verification](docs/AWS_DEPLOYMENT_VERIFICATION.md) for
+the bounded observations and limitations, and
+[AWS deployment runbook](docs/AWS_DEPLOYMENT_RUNBOOK.md) for the operational approach.
 
 ## Known limitations
 
@@ -334,4 +344,6 @@ application-owned automatic retention or cleanup policy.
 | Local startup | [Application startup](docs/APPLICATION_STARTUP.md) · [Containerized environment](docs/CONTAINERIZED_LOCAL_ENVIRONMENT.md) |
 | Configuration and data | [Configuration profiles](docs/CONFIGURATION_PROFILES.md) · [Database migrations](docs/DATABASE_MIGRATIONS.md) |
 | API and security | [API notes](docs/API_NOTES.md) · [Practical API examples](docs/API_EXAMPLES.md) · [Security](docs/SECURITY.md) |
-| Deployment | [Runtime contract](docs/DEPLOYMENT_RUNTIME.md) · [Verification evidence](docs/DEPLOYMENT_VERIFICATION.md) · [Operator runbook](docs/DEPLOYMENT_RUNBOOK.md) |
+| Deployment contract | [Provider-neutral runtime](docs/DEPLOYMENT_RUNTIME.md) |
+| Historical deployment evidence | [Render verification](docs/DEPLOYMENT_VERIFICATION.md) · [AWS verification](docs/AWS_DEPLOYMENT_VERIFICATION.md) |
+| Provider-specific operations | [Render runbook](docs/DEPLOYMENT_RUNBOOK.md) · [AWS runbook](docs/AWS_DEPLOYMENT_RUNBOOK.md) |
