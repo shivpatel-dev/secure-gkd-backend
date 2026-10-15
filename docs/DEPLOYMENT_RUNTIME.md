@@ -4,11 +4,12 @@ This document defines the provider-neutral runtime contracts for deploying the
 allocation-service and allocation-audit-service containers. It does not select a
 hosting provider or define provider-specific infrastructure.
 
-The repository's single-node Kafka service and topic initialization belong only to
-the Docker Compose local-development environment. A deployment of the complete
-asynchronous path must provide a reachable Kafka cluster and the source and
-dead-letter topics externally; the repository does not provision that external
-infrastructure. The allocation image's outbox publisher is disabled by default, so
+The repository's single-node Kafka service and topic initialization define the
+Docker Compose local-development environment, also reused in the bounded temporary
+[AWS exercise](AWS_DEPLOYMENT_VERIFICATION.md). They are not production infrastructure.
+A deployment of the complete asynchronous path must provide reachable Kafka and the
+source and dead-letter topics outside the service images; the repository does not
+provision cloud infrastructure. The allocation image's outbox publisher is disabled by default, so
 Kafka is not an allocation-service startup or synchronous-correctness prerequisite.
 The audit service, by contrast, is a Kafka consumer and needs its own database and
 broker connectivity to perform audit processing.
@@ -162,4 +163,12 @@ The recorded Render exercise covered only one temporary allocation Web Service a
 one PostgreSQL database; both were removed afterward. It did not deploy or verify the
 audit service, Kafka transport, or complete two-service topology, and it does not
 establish a continuously running production deployment. See
-[Deployment verification](DEPLOYMENT_VERIFICATION.md) for that bounded evidence.
+[Render deployment verification](DEPLOYMENT_VERIFICATION.md) for that bounded evidence
+and the [Render runbook](DEPLOYMENT_RUNBOOK.md) for its operator procedure.
+
+The later temporary AWS exercise verified the complete two-service Compose topology,
+including Kafka delivery and audit persistence, on October 14, 2026. Its final run
+resumed with retained fixtures, and resources were removed on October 15, 2026. See
+[AWS deployment verification](AWS_DEPLOYMENT_VERIFICATION.md) for observations and
+untested capabilities, and the [AWS runbook](AWS_DEPLOYMENT_RUNBOOK.md) for operations.
+Neither historical exercise establishes ongoing hosting or production readiness.

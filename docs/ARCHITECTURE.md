@@ -224,6 +224,13 @@ historical evidence from one temporary Render Web Service and PostgreSQL databas
 does not define the architecture or imply that a continuously running Render
 deployment exists: those temporary resources were removed after verification.
 
+The later [AWS deployment verification](AWS_DEPLOYMENT_VERIFICATION.md) records the
+complete two-service Compose topology on one temporary EC2 instance on October 14,
+2026, including Kafka delivery and durable audit persistence. Its final resumed run
+reused retained synthetic fixtures. Resources were removed on October 15, 2026;
+restart/recovery, load, and production readiness were not established on AWS. See the
+[AWS runbook](AWS_DEPLOYMENT_RUNBOOK.md) for the provider-specific operational shape.
+
 ## Repository evidence
 
 The following paths connect the architectural claims above to the implemented and
@@ -250,4 +257,6 @@ particular local or GitHub Actions run has passed.
 - [Configuration profiles](CONFIGURATION_PROFILES.md)
 - [Deployment runtime](DEPLOYMENT_RUNTIME.md)
 - [Render deployment verification](DEPLOYMENT_VERIFICATION.md)
+- [AWS deployment verification](AWS_DEPLOYMENT_VERIFICATION.md)
+- [AWS deployment runbook](AWS_DEPLOYMENT_RUNBOOK.md)
 - [Application startup](APPLICATION_STARTUP.md)
